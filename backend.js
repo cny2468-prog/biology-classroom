@@ -3,13 +3,14 @@
   const config=window.BIO_SUPABASE_CONFIG;
   if(!config||!window.supabase){console.error("Supabase client unavailable");return}
   const db=window.supabase.createClient(config.url,config.publishableKey,{auth:{persistSession:true,autoRefreshToken:true}});
+  const AUTH_REDIRECT="https://cny2468-prog.github.io/biology-classroom/";
   const remote={session:null,user:null,profile:null,classes:[],selectedClass:null};
   window.bioBackend={db,remote};
 
   const authForm=document.querySelector("#joinForm");
   const joinCard=document.querySelector(".join-card");
   const authIntro=joinCard.querySelector("h2");
-  authForm.innerHTML=`<div class="auth-tabs"><button type="button" class="active" data-auth-mode="signup">학생 가입</button><button type="button" data-auth-mode="teacher">교사 등록</button><button type="button" data-auth-mode="login">로그인</button></div><label data-register-only>이름<input name="displayName" placeholder="이름" required></label><label>이메일<input name="email" type="email" placeholder="name@example.com" required></label><label>비밀번호<input name="password" type="password" minlength="6" placeholder="6자리 이상" required></label><label data-student-only>분반 인증번호<input name="classCode" placeholder="선생님에게 받은 코드" required></label><p class="form-error" id="joinError"></p><button class="primary wide" type="submit">가입하고 분반 들어가기</button>`;
+  authForm.innerHTML=`<div class="auth-tabs"><button type="button" class="active" data-auth-mode="signup">학생 가입</button><button type="button" data-auth-mode="teacher">교사 등록</button><button type="button" data-auth-mode="login">로그인</button></div><label data-register-only>이름<input name="displayName" placeholder="이름" required></label><label>이메일<input name="email" type="email" placeholder="name@example.com" required></label><label>비밀번호<input name="password" type="password" minlength="6" placeholder="6자리 이상" required></label><label data-student-only>분반 인증번호<input name="classCode" placeholder="선생님에게 받은 코드" required></label><p class="form-error" id="joinError"></p><button class="primary wide" type="submit">가입하고 분반 들어가기</button><button class="resend-button" id="resendConfirmation" type="button">인증 메일 다시 보내기</button>`;
   joinCard.querySelector("small").textContent="교사는 계정 생성 후 관리자에게 교사 권한을 요청하세요.";
   let authMode="signup";
   joinCard.querySelectorAll("[data-auth-mode]").forEach(button=>button.onclick=()=>{
@@ -27,14 +28,15 @@
     try{
       if(authMode!=='login'){
         const code=String(fd.get("classCode")||"").trim();if(authMode==='signup')sessionStorage.setItem("bio_pending_class_code",code);else sessionStorage.setItem("bio_pending_teacher_email",email);
-        const {data,error}=await db.auth.signUp({email,password,options:{data:{display_name:String(fd.get("displayName")).trim()}}});if(error)throw error;
+        const {data,error}=await db.auth.signUp({email,password,options:{data:{display_name:String(fd.get("displayName")).trim()},emailRedirectTo:AUTH_REDIRECT}});if(error)throw error;
         if(!data.session){toast(authMode==='teacher'?"이메일 인증 후 관리자 승인을 요청해 주세요.":"확인 이메일을 열어 가입을 완료해 주세요.");return}
         await activate(data.session);
       }else{const {data,error}=await db.auth.signInWithPassword({email,password});if(error)throw error;await activate(data.session)}
       closeModals();toast("안전하게 로그인했습니다.");
     }catch(error){errorBox.textContent=koreanError(error.message)}
   };
-  function koreanError(message){if(/Invalid login/i.test(message))return"이메일 또는 비밀번호를 확인해 주세요.";if(/already registered/i.test(message))return"이미 가입된 이메일입니다. 로그인해 주세요.";return message}
+  document.querySelector("#resendConfirmation").onclick=async()=>{const email=String(authForm.querySelector('[name="email"]').value).trim(),errorBox=joinCard.querySelector("#joinError");if(!email){errorBox.textContent="이메일을 먼저 입력해 주세요.";return}const {error}=await db.auth.resend({type:"signup",email,options:{emailRedirectTo:AUTH_REDIRECT}});if(error){errorBox.textContent=koreanError(error.message);return}errorBox.textContent="";toast("인증 메일을 다시 보냈습니다. 스팸함도 확인해 주세요.")};
+  function koreanError(message){if(/Email not confirmed/i.test(message))return"이메일 인증이 아직 완료되지 않았습니다. 인증 메일을 확인해 주세요.";if(/Invalid login/i.test(message))return"이메일 또는 비밀번호를 확인해 주세요.";if(/already registered/i.test(message))return"이미 가입된 이메일입니다. 로그인해 주세요.";if(/rate limit/i.test(message))return"잠시 후 다시 시도해 주세요.";return message}
 
   async function activate(session){
     remote.session=session;remote.user=session.user;
