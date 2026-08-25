@@ -10,8 +10,9 @@
   const authForm=document.querySelector("#joinForm");
   const joinCard=document.querySelector(".join-card");
   const authIntro=joinCard.querySelector("h2");
-  authForm.innerHTML=`<div class="auth-tabs"><button type="button" class="active" data-auth-mode="signup">학생 가입</button><button type="button" data-auth-mode="teacher">교사 등록</button><button type="button" data-auth-mode="login">로그인</button></div><label data-register-only>이름<input name="displayName" placeholder="이름" required></label><label>이메일<input name="email" type="email" placeholder="name@example.com" required></label><label>비밀번호<input name="password" type="password" minlength="6" placeholder="6자리 이상" required></label><label data-student-only>분반 인증번호<input name="classCode" placeholder="선생님에게 받은 코드" required></label><p class="form-error" id="joinError"></p><button class="primary wide" type="submit">가입하고 분반 들어가기</button><button class="resend-button" id="resendConfirmation" type="button">인증 메일 다시 보내기</button>`;
-  joinCard.querySelector("small").textContent="교사는 계정 생성 후 관리자에게 교사 권한을 요청하세요.";
+  authForm.innerHTML=`<div class="auth-tabs"><button type="button" class="active" data-auth-mode="signup">학생 가입</button><button type="button" data-auth-mode="teacher">교사 등록</button><button type="button" data-auth-mode="login">로그인</button></div><label data-register-only>이름<input name="displayName" placeholder="이름" required></label><label>이메일<input name="email" type="email" placeholder="name@example.com" required></label><label>비밀번호<input name="password" type="password" minlength="6" placeholder="6자리 이상" required></label><label data-student-only>분반 인증번호<input name="classCode" placeholder="선생님에게 받은 코드" required></label><p class="form-error" id="joinError"></p><button class="primary wide" type="submit">가입하고 분반 들어가기</button><button class="resend-button hidden" id="resendConfirmation" type="button">기존 계정 인증 메일 다시 받기</button>`;
+  const authNote=joinCard.querySelector("small");
+  authNote.textContent="학생은 이메일 인증 없이 바로 가입할 수 있어요.";
   let authMode="signup";
   joinCard.querySelectorAll("[data-auth-mode]").forEach(button=>button.onclick=()=>{
     authMode=button.dataset.authMode;joinCard.querySelectorAll("[data-auth-mode]").forEach(x=>x.classList.toggle("active",x===button));
@@ -19,8 +20,10 @@
     joinCard.querySelectorAll("[data-register-only] input").forEach(x=>x.required=authMode!=='login');
     joinCard.querySelectorAll("[data-student-only]").forEach(x=>x.classList.toggle("hidden",authMode!=='signup'));
     joinCard.querySelectorAll("[data-student-only] input").forEach(x=>x.required=authMode==='signup');
+    document.querySelector("#resendConfirmation").classList.toggle("hidden",authMode!=='login');
     authIntro.textContent=authMode==='signup'?"우리 반에 들어오세요":authMode==='teacher'?"교사 계정을 등록하세요":"다시 만나 반가워요";
     authForm.querySelector("button[type=submit]").textContent=authMode==='signup'?"가입하고 분반 들어가기":authMode==='teacher'?"교사 계정 등록":"로그인";
+    authNote.textContent=authMode==='signup'?"학생은 이메일 인증 없이 바로 가입할 수 있어요.":authMode==='teacher'?"계정 생성 후 관리자에게 교사 권한을 요청하세요.":"가입할 때 사용한 이메일과 비밀번호를 입력해 주세요.";
   });
   authForm.onsubmit=async event=>{
     event.preventDefault();const fd=new FormData(authForm),errorBox=joinCard.querySelector("#joinError");errorBox.textContent="";
@@ -28,15 +31,16 @@
     try{
       if(authMode!=='login'){
         const code=String(fd.get("classCode")||"").trim();if(authMode==='signup')sessionStorage.setItem("bio_pending_class_code",code);else sessionStorage.setItem("bio_pending_teacher_email",email);
-        const {data,error}=await db.auth.signUp({email,password,options:{data:{display_name:String(fd.get("displayName")).trim()},emailRedirectTo:AUTH_REDIRECT}});if(error)throw error;
-        if(!data.session){toast(authMode==='teacher'?"이메일 인증 후 관리자 승인을 요청해 주세요.":"확인 이메일을 열어 가입을 완료해 주세요.");return}
+        const requestedRole=authMode==='teacher'?"teacher":"student";
+        const {data,error}=await db.auth.signUp({email,password,options:{data:{display_name:String(fd.get("displayName")).trim(),requested_role:requestedRole}}});if(error)throw error;
+        if(!data.session)throw Error(authMode==='signup'?"학생 즉시 가입 설정이 아직 적용되지 않았습니다. 관리자에게 알려 주세요.":"계정은 생성되었지만 바로 로그인되지 않았습니다. 관리자에게 알려 주세요.");
         await activate(data.session);
       }else{const {data,error}=await db.auth.signInWithPassword({email,password});if(error)throw error;await activate(data.session)}
       closeModals();toast("안전하게 로그인했습니다.");
     }catch(error){errorBox.textContent=koreanError(error.message)}
   };
   document.querySelector("#resendConfirmation").onclick=async()=>{const email=String(authForm.querySelector('[name="email"]').value).trim(),errorBox=joinCard.querySelector("#joinError");if(!email){errorBox.textContent="이메일을 먼저 입력해 주세요.";return}const {error}=await db.auth.resend({type:"signup",email,options:{emailRedirectTo:AUTH_REDIRECT}});if(error){errorBox.textContent=koreanError(error.message);return}errorBox.textContent="";toast("인증 메일을 다시 보냈습니다. 스팸함도 확인해 주세요.")};
-  function koreanError(message){if(/Email not confirmed/i.test(message))return"이메일 인증이 아직 완료되지 않았습니다. 인증 메일을 확인해 주세요.";if(/Invalid login/i.test(message))return"이메일 또는 비밀번호를 확인해 주세요.";if(/already registered/i.test(message))return"이미 가입된 이메일입니다. 로그인해 주세요.";if(/rate limit/i.test(message))return"잠시 후 다시 시도해 주세요.";return message}
+  function koreanError(message){if(/Email not confirmed/i.test(message))return"기존에 만든 계정의 이메일 인증이 필요합니다. 아래 인증 메일 다시 받기를 이용해 주세요.";if(/Invalid login/i.test(message))return"이메일 또는 비밀번호를 확인해 주세요.";if(/already registered/i.test(message))return"이미 가입된 이메일입니다. 로그인해 주세요.";if(/rate limit/i.test(message))return"잠시 후 다시 시도해 주세요.";return message}
 
   async function activate(session){
     remote.session=session;remote.user=session.user;
@@ -46,7 +50,8 @@
   }
   function installUserControls(){
     let role=document.querySelector("#roleBadge");if(!role){role=document.createElement("span");role.id="roleBadge";document.querySelector(".user-area").prepend(role)}
-    role.className=`role-badge ${remote.profile.role}`;role.textContent=remote.profile.role==='teacher'?"교사":"학생";
+    const awaitingTeacher=remote.profile.role!=="teacher"&&remote.user.user_metadata?.requested_role==="teacher";
+    role.className=`role-badge ${awaitingTeacher?'teacher':remote.profile.role}`;role.textContent=remote.profile.role==='teacher'?"교사":awaitingTeacher?"교사 승인 대기":"학생";
     let out=document.querySelector("#logoutButton");if(!out){out=document.createElement("button");out.id="logoutButton";out.className="logout-button";out.textContent="로그아웃";document.querySelector(".user-area").append(out)}
     out.onclick=async()=>{await db.auth.signOut();location.reload()};
   }
