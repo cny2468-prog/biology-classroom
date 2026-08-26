@@ -13,7 +13,7 @@
   const authForm=document.querySelector("#joinForm");
   const joinCard=document.querySelector(".join-card");
   const authIntro=joinCard.querySelector("h2");
-  authForm.innerHTML=`<div class="auth-tabs"><button type="button" class="active" data-auth-mode="signup">학생 가입</button><button type="button" data-auth-mode="teacher">교사 등록</button><button type="button" data-auth-mode="login">로그인</button></div><label data-register-only>이름<input name="displayName" placeholder="이름" required></label><label>정확한 이메일 주소<input name="email" type="email" autocomplete="email" placeholder="name@example.com" required></label><label>비밀번호<input name="password" type="password" minlength="8" autocomplete="current-password" placeholder="8자리 이상" required></label><label data-student-only>분반 인증번호<input name="classCode" placeholder="선생님에게 받은 코드" required></label><p class="form-error" id="joinError"></p><button class="primary wide" type="submit">가입하고 분반 들어가기</button><button class="resend-button hidden" id="forgotPassword" type="button">비밀번호를 잊었나요?</button><button class="resend-button hidden" id="resendConfirmation" type="button">가입 인증 메일 다시 받기</button>`;
+  authForm.innerHTML=`<div class="auth-tabs"><button type="button" class="active" data-auth-mode="signup">학생 가입</button><button type="button" data-auth-mode="teacher">교사 등록</button><button type="button" data-auth-mode="login">로그인</button></div><label data-register-only>이름<input name="displayName" placeholder="이름" required></label><label data-student-only>학번<input name="studentNumber" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="5자리 학번" required></label><label>정확한 이메일 주소<input name="email" type="email" autocomplete="email" placeholder="name@example.com" required></label><label>비밀번호<input name="password" type="password" minlength="8" autocomplete="current-password" placeholder="8자리 이상" required></label><label data-student-only data-optional>분반 인증번호 <small>(명단 학생은 생략 가능)</small><input name="classCode" placeholder="인증번호가 있으면 입력"></label><p class="form-error" id="joinError"></p><button class="primary wide" type="submit">가입하고 분반 들어가기</button><button class="resend-button hidden" id="forgotPassword" type="button">비밀번호를 잊었나요?</button><button class="resend-button hidden" id="resendConfirmation" type="button">가입 인증 메일 다시 받기</button>`;
   const authNote=joinCard.querySelector("small");
   authNote.textContent="실제로 메일을 받을 수 있는 주소를 입력해 주세요.";
   let authMode="signup";
@@ -22,7 +22,7 @@
     joinCard.querySelectorAll("[data-register-only]").forEach(x=>x.classList.toggle("hidden",authMode==='login'));
     joinCard.querySelectorAll("[data-register-only] input").forEach(x=>x.required=authMode!=='login');
     joinCard.querySelectorAll("[data-student-only]").forEach(x=>x.classList.toggle("hidden",authMode!=='signup'));
-    joinCard.querySelectorAll("[data-student-only] input").forEach(x=>x.required=authMode==='signup');
+    joinCard.querySelectorAll("[data-student-only] input").forEach(x=>x.required=authMode==='signup'&&!x.closest("[data-optional]"));
     document.querySelector("#resendConfirmation").classList.toggle("hidden",authMode!=='login');
     document.querySelector("#forgotPassword").classList.toggle("hidden",authMode!=='login');
     authIntro.textContent=authMode==='signup'?"우리 반에 들어오세요":authMode==='teacher'?"교사 계정을 등록하세요":"다시 만나 반가워요";
@@ -35,9 +35,9 @@
     try{
       if(authMode!=='login'){
         const code=String(fd.get("classCode")||"").trim();if(authMode==='signup')sessionStorage.setItem("bio_pending_class_code",code);else sessionStorage.setItem("bio_pending_teacher_email",email);
-        const requestedRole=authMode==='teacher'?"teacher":"student";
+        const requestedRole=authMode==='teacher'?"teacher":"student",studentNumber=String(fd.get("studentNumber")||"").trim();
         const displayName=String(fd.get("displayName")).trim(),authSettings=await authSettingsPromise,needsAppVerification=authSettings.mailer_autoconfirm===true;
-        const {data,error}=await db.auth.signUp({email,password,options:{emailRedirectTo:AUTH_REDIRECT,data:{display_name:displayName,requested_role:requestedRole,class_code:authMode==='signup'?code:null,email_verification_pending:needsAppVerification}}});if(error)throw error;
+        const {data,error}=await db.auth.signUp({email,password,options:{emailRedirectTo:AUTH_REDIRECT,data:{display_name:displayName,requested_role:requestedRole,student_number:authMode==='signup'?studentNumber:null,class_code:authMode==='signup'?code:null,email_verification_pending:needsAppVerification}}});if(error)throw error;
         if(needsAppVerification){const {error:mailError}=await db.auth.resetPasswordForEmail(email,{redirectTo:AUTH_REDIRECT});await db.auth.signOut();if(mailError)throw mailError;closeModals();toast("입력한 이메일로 가입 인증 링크를 보냈습니다. 링크에서 새 비밀번호를 설정해 주세요.");return}
         if(!data.session){closeModals();toast("가입 인증 메일을 보냈습니다. 메일의 링크를 눌러 가입을 완료해 주세요.");return}
         await activate(data.session);
@@ -108,6 +108,7 @@
     if(remote.profile.role==='teacher'){
       const {data,error}=await db.from("classes").select("*").eq("teacher_id",remote.user.id).order("created_at");if(error)throw error;remote.classes=data;
     }else{
+      const studentNumber=remote.user.user_metadata?.student_number;if(studentNumber){const {error}=await db.rpc("join_roster_class",{number:String(studentNumber)});if(error&&!/Could not find the function|does not exist/i.test(error.message))console.warn("명단 자동 분반 실패",error)}
       const code=sessionStorage.getItem("bio_pending_class_code")||remote.user.user_metadata?.class_code;if(code){const {error}=await db.rpc("join_class_with_code",{code});if(!error)sessionStorage.removeItem("bio_pending_class_code")}
       const {data,error}=await db.from("enrollments").select("class_id,classes(id,name)").eq("student_id",remote.user.id);if(error)throw error;remote.classes=data.map(x=>x.classes).filter(Boolean);
     }
