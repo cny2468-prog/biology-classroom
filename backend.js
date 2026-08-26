@@ -200,15 +200,26 @@
     const [{data:q,error:qe},{data:ans,error:ane},{data:posts,error:pe},{data:people,error:pre}]=await Promise.all([
       db.from("questions").select("*").order("created_at",{ascending:false}),db.from("answers").select("*").order("created_at"),db.from("lounge_posts").select("*").order("created_at",{ascending:false}),db.from("profiles").select("id,display_name")
     ]);if(qe||ane||pe||pre){console.error(qe||ane||pe||pre);return}const names=new Map((people||[]).map(p=>[p.id,p.display_name]));
-    questions=(q||[]).map(item=>({id:item.id,title:item.title,body:item.body,author:names.get(item.author_id)||"학생",status:(ans||[]).some(a=>a.question_id===item.id)?"answered":"waiting",subject:item.material_id?"수업 자료 질문":"전체 질문",likes:0,answers:(ans||[]).filter(a=>a.question_id===item.id).map(a=>({author:names.get(a.author_id)||"학생",text:a.body,helpful:a.helpful_count||0}))}));
-    lounge=(posts||[]).map(item=>({id:item.id,type:item.category,label:{article:"기사·자료",debate:"토론",wonder:"신기한 생물"}[item.category],title:item.title,body:item.body,author:names.get(item.author_id)||"학생",likes:0,comments:0,link:item.link}));renderQuestions();renderLounge();
+    const allPaths=[...(q||[]),...(ans||[]),...(posts||[])].flatMap(item=>item.image_paths||[]),signedByPath=new Map();
+    await Promise.all(allPaths.map(async path=>{const {data}=await db.storage.from("community-images").createSignedUrl(path,3600);if(data?.signedUrl)signedByPath.set(path,data.signedUrl)}));
+    const imageUrls=item=>(item.image_paths||[]).map(path=>signedByPath.get(path)).filter(Boolean),unitLabels={unit1:"1단원",unit2:"2단원",unit3:"3단원"};
+    questions=(q||[]).map(item=>({id:item.id,title:escapeHtml(item.title),body:escapeHtml(item.body),author:escapeHtml(names.get(item.author_id)||"학생"),status:(ans||[]).some(a=>a.question_id===item.id)?"answered":"waiting",category:item.category||"unit1",subject:unitLabels[item.category]||"1단원",imageUrls:imageUrls(item),likes:0,answers:(ans||[]).filter(a=>a.question_id===item.id).map(a=>({author:escapeHtml(names.get(a.author_id)||"학생"),text:escapeHtml(a.body),imageUrls:imageUrls(a),helpful:a.helpful_count||0}))}));
+    lounge=(posts||[]).map(item=>({id:item.id,type:item.category,label:{article:"기사·자료",debate:"토론",wonder:"신기한 생물"}[item.category],title:escapeHtml(item.title),body:escapeHtml(item.body),author:escapeHtml(names.get(item.author_id)||"학생"),imageUrls:imageUrls(item),likes:0,comments:0,link:item.link}));renderQuestions();renderLounge();
+  }
+  async function uploadCommunityImages(fd,kind){
+    const files=fd.getAll("images").filter(file=>file instanceof File&&file.size);
+    if(files.length>5)throw Error("사진은 한 번에 최대 5장까지 올릴 수 있습니다.");
+    for(const file of files){if(!/^image\/(jpeg|png|webp|gif)$/i.test(file.type))throw Error("JPG, PNG, WEBP, GIF 사진만 올릴 수 있습니다.");if(file.size>10*1024*1024)throw Error("사진 한 장의 크기는 10MB 이하여야 합니다.")}
+    const paths=[];
+    try{for(const file of files){const extension=(file.name.split(".").pop()||"jpg").replace(/[^a-z0-9]/gi,"").toLowerCase(),path=`${remote.user.id}/${kind}/${Date.now()}-${crypto.randomUUID()}.${extension}`;const {error}=await db.storage.from("community-images").upload(path,file,{contentType:file.type,upsert:false});if(error)throw error;paths.push(path)}return paths}
+    catch(error){if(paths.length)await db.storage.from("community-images").remove(paths);throw error}
   }
   const localDynamicSubmit=document.querySelector("#dynamicForm").onsubmit;
   document.querySelector("#dynamicForm").onsubmit=async event=>{
     const mode=state.formMode?.mode;if(!remote.user||!['question','lounge','answer'].includes(mode)){return localDynamicSubmit.call(event.currentTarget,event)}event.preventDefault();const fd=new FormData(event.currentTarget),errorBox=document.querySelector("#formError");try{
-      if(mode==='question'){const {error}=await db.from("questions").insert({class_id:null,author_id:remote.user.id,title:fd.get("title"),body:fd.get("body")});if(error)throw error}
-      if(mode==='lounge'){const {error}=await db.from("lounge_posts").insert({author_id:remote.user.id,category:fd.get("type"),title:fd.get("title"),body:fd.get("body"),link:fd.get("link")||null});if(error)throw error}
-      if(mode==='answer'){const {error}=await db.from("answers").insert({question_id:state.formMode.data.id,author_id:remote.user.id,body:fd.get("body")});if(error)throw error}
+      if(mode==='question'){const imagePaths=await uploadCommunityImages(fd,"questions"),{error}=await db.from("questions").insert({class_id:null,author_id:remote.user.id,category:fd.get("category"),title:fd.get("title"),body:fd.get("body"),image_paths:imagePaths});if(error){if(imagePaths.length)await db.storage.from("community-images").remove(imagePaths);throw error}}
+      if(mode==='lounge'){const imagePaths=await uploadCommunityImages(fd,"lounge"),{error}=await db.from("lounge_posts").insert({author_id:remote.user.id,category:fd.get("type"),title:fd.get("title"),body:fd.get("body"),link:fd.get("link")||null,image_paths:imagePaths});if(error){if(imagePaths.length)await db.storage.from("community-images").remove(imagePaths);throw error}}
+      if(mode==='answer'){const imagePaths=await uploadCommunityImages(fd,"answers"),{error}=await db.from("answers").insert({question_id:state.formMode.data.id,author_id:remote.user.id,body:fd.get("body"),image_paths:imagePaths});if(error){if(imagePaths.length)await db.storage.from("community-images").remove(imagePaths);throw error}}
       closeModals();await loadCommunity();toast("모든 분반에 공유되었습니다.");
     }catch(error){errorBox.textContent=error.message}
   };
