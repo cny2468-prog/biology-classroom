@@ -4,6 +4,7 @@
   if(!config||!window.supabase){console.error("Supabase client unavailable");return}
   const db=window.supabase.createClient(config.url,config.publishableKey,{auth:{persistSession:true,autoRefreshToken:true}});
   const AUTH_REDIRECT="https://cny2468-prog.github.io/biology-classroom/";
+  const authSettingsPromise=fetch(`${config.url}/auth/v1/settings`,{headers:{apikey:config.publishableKey}}).then(response=>response.ok?response.json():({mailer_autoconfirm:true})).catch(()=>({mailer_autoconfirm:true}));
   const remote={session:null,user:null,profile:null,classes:[],selectedClass:null};
   const baseRenderMaterials=renderMaterials;
   renderMaterials=function(){baseRenderMaterials();document.querySelectorAll("#materialGrid [data-open-material]").forEach(button=>button.onclick=null);decorateTeacherMaterials()};
@@ -12,9 +13,9 @@
   const authForm=document.querySelector("#joinForm");
   const joinCard=document.querySelector(".join-card");
   const authIntro=joinCard.querySelector("h2");
-  authForm.innerHTML=`<div class="auth-tabs"><button type="button" class="active" data-auth-mode="signup">학생 가입</button><button type="button" data-auth-mode="teacher">교사 등록</button><button type="button" data-auth-mode="login">로그인</button></div><label data-register-only>이름<input name="displayName" placeholder="이름" required></label><label>이메일<input name="email" type="email" placeholder="name@example.com" required></label><label>비밀번호<input name="password" type="password" minlength="6" placeholder="6자리 이상" required></label><label data-student-only>분반 인증번호<input name="classCode" placeholder="선생님에게 받은 코드" required></label><p class="form-error" id="joinError"></p><button class="primary wide" type="submit">가입하고 분반 들어가기</button><button class="resend-button hidden" id="resendConfirmation" type="button">기존 계정 인증 메일 다시 받기</button>`;
+  authForm.innerHTML=`<div class="auth-tabs"><button type="button" class="active" data-auth-mode="signup">학생 가입</button><button type="button" data-auth-mode="teacher">교사 등록</button><button type="button" data-auth-mode="login">로그인</button></div><label data-register-only>이름<input name="displayName" placeholder="이름" required></label><label>정확한 이메일 주소<input name="email" type="email" autocomplete="email" placeholder="name@example.com" required></label><label>비밀번호<input name="password" type="password" minlength="8" autocomplete="current-password" placeholder="8자리 이상" required></label><label data-student-only>분반 인증번호<input name="classCode" placeholder="선생님에게 받은 코드" required></label><p class="form-error" id="joinError"></p><button class="primary wide" type="submit">가입하고 분반 들어가기</button><button class="resend-button hidden" id="forgotPassword" type="button">비밀번호를 잊었나요?</button><button class="resend-button hidden" id="resendConfirmation" type="button">가입 인증 메일 다시 받기</button>`;
   const authNote=joinCard.querySelector("small");
-  authNote.textContent="학생은 이메일 인증 없이 바로 가입할 수 있어요.";
+  authNote.textContent="실제로 메일을 받을 수 있는 주소를 입력해 주세요.";
   let authMode="signup";
   joinCard.querySelectorAll("[data-auth-mode]").forEach(button=>button.onclick=()=>{
     authMode=button.dataset.authMode;joinCard.querySelectorAll("[data-auth-mode]").forEach(x=>x.classList.toggle("active",x===button));
@@ -23,9 +24,10 @@
     joinCard.querySelectorAll("[data-student-only]").forEach(x=>x.classList.toggle("hidden",authMode!=='signup'));
     joinCard.querySelectorAll("[data-student-only] input").forEach(x=>x.required=authMode==='signup');
     document.querySelector("#resendConfirmation").classList.toggle("hidden",authMode!=='login');
+    document.querySelector("#forgotPassword").classList.toggle("hidden",authMode!=='login');
     authIntro.textContent=authMode==='signup'?"우리 반에 들어오세요":authMode==='teacher'?"교사 계정을 등록하세요":"다시 만나 반가워요";
     authForm.querySelector("button[type=submit]").textContent=authMode==='signup'?"가입하고 분반 들어가기":authMode==='teacher'?"교사 계정 등록":"로그인";
-    authNote.textContent=authMode==='signup'?"학생은 이메일 인증 없이 바로 가입할 수 있어요.":authMode==='teacher'?"계정 생성 후 관리자에게 교사 권한을 요청하세요.":"가입할 때 사용한 이메일과 비밀번호를 입력해 주세요.";
+    authNote.textContent=authMode==='signup'?"메일 인증을 마쳐야 가입이 완료됩니다.":authMode==='teacher'?"메일 인증 후 관리자에게 교사 권한을 요청하세요.":"가입할 때 인증한 이메일과 비밀번호를 입력해 주세요.";
   });
   authForm.onsubmit=async event=>{
     event.preventDefault();const fd=new FormData(authForm),errorBox=joinCard.querySelector("#joinError");errorBox.textContent="";
@@ -34,21 +36,34 @@
       if(authMode!=='login'){
         const code=String(fd.get("classCode")||"").trim();if(authMode==='signup')sessionStorage.setItem("bio_pending_class_code",code);else sessionStorage.setItem("bio_pending_teacher_email",email);
         const requestedRole=authMode==='teacher'?"teacher":"student";
-        const {data,error}=await db.auth.signUp({email,password,options:{data:{display_name:String(fd.get("displayName")).trim(),requested_role:requestedRole}}});if(error)throw error;
-        if(!data.session)throw Error(authMode==='signup'?"학생 즉시 가입 설정이 아직 적용되지 않았습니다. 관리자에게 알려 주세요.":"계정은 생성되었지만 바로 로그인되지 않았습니다. 관리자에게 알려 주세요.");
+        const displayName=String(fd.get("displayName")).trim(),authSettings=await authSettingsPromise,needsAppVerification=authSettings.mailer_autoconfirm===true;
+        const {data,error}=await db.auth.signUp({email,password,options:{emailRedirectTo:AUTH_REDIRECT,data:{display_name:displayName,requested_role:requestedRole,class_code:authMode==='signup'?code:null,email_verification_pending:needsAppVerification}}});if(error)throw error;
+        if(needsAppVerification){const {error:mailError}=await db.auth.resetPasswordForEmail(email,{redirectTo:AUTH_REDIRECT});await db.auth.signOut();if(mailError)throw mailError;closeModals();toast("입력한 이메일로 가입 인증 링크를 보냈습니다. 링크에서 새 비밀번호를 설정해 주세요.");return}
+        if(!data.session){closeModals();toast("가입 인증 메일을 보냈습니다. 메일의 링크를 눌러 가입을 완료해 주세요.");return}
         await activate(data.session);
-      }else{const {data,error}=await db.auth.signInWithPassword({email,password});if(error)throw error;await activate(data.session)}
+      }else{const {data,error}=await db.auth.signInWithPassword({email,password});if(error)throw error;if(data.user?.user_metadata?.email_verification_pending){await db.auth.signOut();throw Error("이메일 인증이 아직 완료되지 않았습니다. 비밀번호 찾기에서 인증 메일을 다시 받아 주세요.")}await activate(data.session)}
       closeModals();toast("안전하게 로그인했습니다.");
     }catch(error){errorBox.textContent=koreanError(error.message)}
   };
-  document.querySelector("#resendConfirmation").onclick=async()=>{const email=String(authForm.querySelector('[name="email"]').value).trim(),errorBox=joinCard.querySelector("#joinError");if(!email){errorBox.textContent="이메일을 먼저 입력해 주세요.";return}const {error}=await db.auth.resend({type:"signup",email,options:{emailRedirectTo:AUTH_REDIRECT}});if(error){errorBox.textContent=koreanError(error.message);return}errorBox.textContent="";toast("인증 메일을 다시 보냈습니다. 스팸함도 확인해 주세요.")};
+  document.querySelector("#resendConfirmation").onclick=async()=>{const email=String(authForm.querySelector('[name="email"]').value).trim(),errorBox=joinCard.querySelector("#joinError");if(!email){errorBox.textContent="이메일을 먼저 입력해 주세요.";return}const settings=await authSettingsPromise,result=settings.mailer_autoconfirm===true?await db.auth.resetPasswordForEmail(email,{redirectTo:AUTH_REDIRECT}):await db.auth.resend({type:"signup",email,options:{emailRedirectTo:AUTH_REDIRECT}});if(result.error){errorBox.textContent=koreanError(result.error.message);return}errorBox.textContent="";toast("가입 인증 메일을 다시 보냈습니다. 스팸함도 확인해 주세요.")};
+  document.querySelector("#forgotPassword").onclick=()=>{ensureAccountModals();closeModals();openModal("#passwordRequestModal")};
   function koreanError(message){if(/Email not confirmed/i.test(message))return"기존에 만든 계정의 이메일 인증이 필요합니다. 아래 인증 메일 다시 받기를 이용해 주세요.";if(/Invalid login/i.test(message))return"이메일 또는 비밀번호를 확인해 주세요.";if(/already registered/i.test(message))return"이미 가입된 이메일입니다. 로그인해 주세요.";if(/rate limit/i.test(message))return"잠시 후 다시 시도해 주세요.";return message}
+  function ensureAccountModals(){
+    if(document.querySelector("#passwordRequestModal"))return;
+    document.body.insertAdjacentHTML("beforeend",`<div class="modal hidden account-modal" id="passwordRequestModal"><form class="modal-card form-card"><button class="modal-close" type="button">×</button><h2>비밀번호 찾기</h2><p>가입할 때 작성한 이름과 이메일을 입력하세요. 해당 이메일로 본인 인증 링크를 보냅니다.</p><label>이름<input name="displayName" required autocomplete="name"></label><label>가입 이메일<input name="email" type="email" required autocomplete="email"></label><p class="form-error"></p><button class="primary wide" type="submit">인증 메일 받기</button></form></div><div class="modal hidden account-modal" id="passwordRecoveryModal"><form class="modal-card form-card"><button class="modal-close" type="button">×</button><h2>새 비밀번호 설정</h2><p>등록한 이름을 한 번 더 확인한 뒤 새 비밀번호를 저장합니다.</p><label>가입할 때 작성한 이름<input name="displayName" required autocomplete="name"></label><label>새 비밀번호<input name="password" type="password" required minlength="8" autocomplete="new-password" placeholder="8자리 이상"></label><label>새 비밀번호 확인<input name="passwordConfirm" type="password" required minlength="8" autocomplete="new-password"></label><p class="form-error"></p><button class="primary wide" type="submit">새 비밀번호 저장</button></form></div>`);
+    document.querySelectorAll(".account-modal .modal-close").forEach(button=>button.onclick=closeModals);
+    document.querySelector("#passwordRequestModal form").onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,errorBox=form.querySelector(".form-error"),fd=new FormData(form),name=String(fd.get("displayName")).trim(),email=String(fd.get("email")).trim();errorBox.textContent="";try{sessionStorage.setItem("bio_password_reset_name",name);const {error}=await db.auth.resetPasswordForEmail(email,{redirectTo:AUTH_REDIRECT});if(error)throw error;closeModals();toast("입력한 이메일로 비밀번호 재설정 링크를 보냈습니다.")}catch(error){errorBox.textContent=koreanError(error.message)}};
+    document.querySelector("#passwordRecoveryModal form").onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,errorBox=form.querySelector(".form-error"),fd=new FormData(form),name=String(fd.get("displayName")).trim(),password=String(fd.get("password")),confirmation=String(fd.get("passwordConfirm"));errorBox.textContent="";try{if(password!==confirmation)throw Error("새 비밀번호가 서로 일치하지 않습니다.");const {data:{user},error:userError}=await db.auth.getUser();if(userError||!user)throw userError||Error("인증 링크가 만료되었습니다. 비밀번호 찾기를 다시 진행해 주세요.");const {data:profile,error:profileError}=await db.from("profiles").select("display_name").eq("id",user.id).single();if(profileError)throw profileError;if(normalizeName(profile.display_name)!==normalizeName(name))throw Error("가입할 때 작성한 이름과 일치하지 않습니다.");const {error}=await db.auth.updateUser({password,data:{...user.user_metadata,email_verification_pending:false}});if(error)throw error;sessionStorage.removeItem("bio_password_reset_name");closeModals();toast("이메일 인증과 새 비밀번호 설정을 완료했습니다.");const {data:{session}}=await db.auth.getSession();if(session)await activate(session)}catch(error){errorBox.textContent=koreanError(error.message)}};
+  }
+  function normalizeName(value){return String(value||"").normalize("NFC").trim().replace(/\s+/g," ")}
+  function openPasswordRecovery(){ensureAccountModals();const input=document.querySelector('#passwordRecoveryModal [name="displayName"]');input.value=sessionStorage.getItem("bio_password_reset_name")||"";closeModals();openModal("#passwordRecoveryModal")}
 
   async function activate(session){
     remote.session=session;remote.user=session.user;
+    if(remote.user.user_metadata?.email_verification_pending){ensureAccountModals();return}
     const {data:profile,error}=await db.from("profiles").select("*").eq("id",remote.user.id).single();if(error)throw error;
     remote.profile=profile;state.student={name:profile.display_name};state.points=profile.points;updateUser();document.body.dataset.role=profile.role;
-    installUserControls();await loadClasses();await loadRemoteContent();
+    installUserControls();installAccountSettings();if(profile.role==='teacher')installTeacherDirectory();await loadClasses();await loadRemoteContent();
   }
   function installUserControls(){
     let role=document.querySelector("#roleBadge");if(!role){role=document.createElement("span");role.id="roleBadge";document.querySelector(".user-area").prepend(role)}
@@ -57,11 +72,25 @@
     let out=document.querySelector("#logoutButton");if(!out){out=document.createElement("button");out.id="logoutButton";out.className="logout-button";out.textContent="로그아웃";document.querySelector(".user-area").append(out)}
     out.onclick=async()=>{await db.auth.signOut();location.reload()};
   }
+  function installAccountSettings(){
+    const host=document.querySelector(".activity-card");if(!host||host.querySelector("#accountSettings"))return;
+    host.insertAdjacentHTML("beforeend",`<section class="account-settings" id="accountSettings"><h3>개인정보 수정</h3><form><label>이름<input name="displayName" required maxlength="40" value="${escapeHtml(remote.profile.display_name)}"></label><label>인증된 이메일<input value="${escapeHtml(remote.user.email||"")}" disabled></label><label>새 비밀번호 <small>(변경할 때만 입력)</small><input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="8자리 이상"></label><label>새 비밀번호 확인<input name="passwordConfirm" type="password" minlength="8" autocomplete="new-password"></label><p class="form-error"></p><button class="primary" type="submit">개인정보 저장</button></form></section>`);
+    host.querySelector("form").onsubmit=async event=>{event.preventDefault();const form=event.currentTarget,fd=new FormData(form),errorBox=form.querySelector(".form-error"),displayName=String(fd.get("displayName")).trim(),password=String(fd.get("password")||""),confirmation=String(fd.get("passwordConfirm")||"");errorBox.textContent="";try{if(password&&password!==confirmation)throw Error("새 비밀번호가 서로 일치하지 않습니다.");const {error:profileError}=await db.from("profiles").update({display_name:displayName}).eq("id",remote.user.id);if(profileError)throw profileError;const changes={data:{display_name:displayName}};if(password)changes.password=password;const {data,error}=await db.auth.updateUser(changes);if(error)throw error;remote.user=data.user;remote.profile.display_name=displayName;state.student.name=displayName;updateUser();form.querySelector('[name="password"]').value="";form.querySelector('[name="passwordConfirm"]').value="";toast(password?"이름과 비밀번호를 변경했습니다.":"이름을 변경했습니다.")}catch(error){errorBox.textContent=koreanError(error.message)}};
+  }
+  let teacherStudents=[];
+  function installTeacherDirectory(){
+    if(!document.querySelector("#teacherAdminNav")){const button=document.createElement("button");button.id="teacherAdminNav";button.dataset.route="teacherAdmin";button.textContent="학생 관리";button.onclick=()=>route("teacherAdmin");document.querySelector(".main-nav").append(button)}
+    if(!document.querySelector('[data-page="teacherAdmin"]')){const section=document.createElement("section");section.className="page subpage";section.dataset.page="teacherAdmin";section.innerHTML='<div class="wrap page-head"><div><p class="eyebrow">STUDENT MANAGEMENT</p><h1>전체 학생 관리</h1><p>가입한 학생과 담당 분반 정보를 확인할 수 있습니다.</p></div><div class="search-box">⌕ <input id="studentDirectorySearch" placeholder="학생 이름 검색"></div></div><div class="wrap teacher-directory-summary"><b id="teacherStudentCount">0</b>명 가입</div><div class="wrap teacher-student-list" id="teacherStudentList"></div>';document.querySelector("main").append(section);section.querySelector("#studentDirectorySearch").addEventListener("input",renderTeacherDirectory)}
+  }
+  async function loadTeacherDirectory(){
+    const [{data:people,error:peopleError},{data:enrollments,error:enrollmentError}]=await Promise.all([db.from("profiles").select("id,display_name,points,created_at").eq("role","student").order("created_at",{ascending:false}),db.from("enrollments").select("student_id,classes(name)")]);if(peopleError)throw peopleError;if(enrollmentError)console.warn(enrollmentError);const classesByStudent=new Map();for(const row of enrollments||[]){const names=classesByStudent.get(row.student_id)||[];if(row.classes?.name)names.push(row.classes.name);classesByStudent.set(row.student_id,names)}teacherStudents=(people||[]).map(person=>({...person,classNames:classesByStudent.get(person.id)||[]}));renderTeacherDirectory();
+  }
+  function renderTeacherDirectory(){const host=document.querySelector("#teacherStudentList");if(!host)return;const q=document.querySelector("#studentDirectorySearch")?.value.trim()||"",list=teacherStudents.filter(student=>!q||student.display_name.includes(q));document.querySelector("#teacherStudentCount").textContent=teacherStudents.length;host.innerHTML=list.map(student=>`<article class="teacher-student-row"><span class="avatar mint">${escapeHtml(student.display_name.slice(-2,-1)||"?")}</span><div><h3>${escapeHtml(student.display_name)}</h3><p>${student.classNames.length?student.classNames.map(escapeHtml).join(" · "):"담당 분반 미등록 또는 다른 교사 분반"}</p></div><div><b>${student.points||0}P</b><small>${new Date(student.created_at).toLocaleDateString("ko-KR")} 가입</small></div></article>`).join("")||'<div class="empty-panel page-empty"><span>♙</span><h3>조건에 맞는 학생이 없습니다</h3></div>'}
   async function loadClasses(){
     if(remote.profile.role==='teacher'){
       const {data,error}=await db.from("classes").select("*").eq("teacher_id",remote.user.id).order("created_at");if(error)throw error;remote.classes=data;
     }else{
-      const code=sessionStorage.getItem("bio_pending_class_code");if(code){const {error}=await db.rpc("join_class_with_code",{code});if(!error)sessionStorage.removeItem("bio_pending_class_code")}
+      const code=sessionStorage.getItem("bio_pending_class_code")||remote.user.user_metadata?.class_code;if(code){const {error}=await db.rpc("join_class_with_code",{code});if(!error)sessionStorage.removeItem("bio_pending_class_code")}
       const {data,error}=await db.from("enrollments").select("class_id,classes(id,name)").eq("student_id",remote.user.id);if(error)throw error;remote.classes=data.map(x=>x.classes).filter(Boolean);
     }
     remote.selectedClass=remote.classes[0]?.id||null;renderClassControls();
@@ -81,7 +110,7 @@
     materials.splice(0,materials.length,...m.map(x=>{const isLink=String(x.file_path||"").startsWith("url:");return{id:x.id,type:isLink?"link":x.kind,unit:isLink?"게임 · 앱 · 웹 활동":"모든 분반 공유",title:x.title,desc:x.description,pages:x.page_count,date:new Date(x.created_at).toLocaleDateString("ko-KR"),color:isLink?"blue":x.kind==='slide'?"green":"yellow",filePath:x.file_path,teacherId:x.teacher_id}}));
     let own=new Map();if(remote.profile.role==='student'){const {data:s}=await db.from("submissions").select("*").eq("student_id",remote.user.id);own=new Map((s||[]).map(x=>[x.assignment_id,x]))}
     assignments=a.map(x=>({id:x.id,title:x.title,desc:x.description,due:x.due_at?new Date(x.due_at).toLocaleDateString("ko-KR"):"마감 없음",d:x.due_at?Math.max(0,Math.ceil((new Date(x.due_at)-Date.now())/86400000)):"-",done:own.has(x.id),submission:own.get(x.id)}));
-    renderMaterials();renderHomeMaterials();remote.profile.role==='teacher'?renderTeacherAssignments():renderAssignments();addRoleActions();await loadCommunity();
+    renderMaterials();renderHomeMaterials();remote.profile.role==='teacher'?renderTeacherAssignments():renderAssignments();addRoleActions();if(remote.profile.role==='teacher')await loadTeacherDirectory();await loadCommunity();
   }
   function renderHomeMaterials(){
     const card=document.querySelector(".today-card");if(!card)return;const heading=card.querySelector(".section-heading")?.outerHTML||"";
@@ -165,5 +194,6 @@
   const localSave=saveDrawing;saveDrawing=function(){localSave();if(!remote.user||remote.profile?.role!=="student"||!state.currentMaterial)return;db.from("personal_notes").upsert({material_id:state.currentMaterial.id,student_id:remote.user.id,page_number:state.currentSlide+1,drawing_data:canvas.toDataURL(),memo:document.querySelector("#sideNote").value},{onConflict:"material_id,student_id,page_number"}).then(({error})=>{if(error)console.error(error)})};
   const localLoad=loadDrawing;loadDrawing=async function(){localLoad();if(!remote.user||remote.profile?.role!=="student"||!state.currentMaterial)return;const {data}=await db.from("personal_notes").select("drawing_data,memo").eq("material_id",state.currentMaterial.id).eq("student_id",remote.user.id).eq("page_number",state.currentSlide+1).maybeSingle();if(data?.drawing_data){const img=new Image;img.onload=()=>ctx.drawImage(img,0,0,canvas.clientWidth,canvas.clientHeight);img.src=data.drawing_data}if(data)document.querySelector("#sideNote").value=data.memo||""};
   function escapeHtml(value){return String(value??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]))}
+  db.auth.onAuthStateChange((event,session)=>{if(event==='PASSWORD_RECOVERY'&&session)setTimeout(openPasswordRecovery,0)});
   db.auth.getSession().then(({data})=>{if(data.session)activate(data.session).catch(e=>{console.error(e);toast("계정 정보를 불러오지 못했습니다.")})});
 })();
