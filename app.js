@@ -65,3 +65,5 @@ updateUser();renderMaterials();renderAssignments();renderQuestions();renderLoung
 document.addEventListener('click',e=>{const b=e.target.closest('[data-view-mode]');if(b){const wrap=$('#lessonCanvas');if(wrap)wrap.style.touchAction=b.dataset.viewMode==='scroll'?'pan-y':'none'}});
 document.addEventListener('click',e=>{const b=e.target.closest('[data-tool]');if(b&&viewerMode==='scroll'){const note=$('#noteCanvas');if(note)note.style.pointerEvents='auto';const wrap=$('#lessonCanvas');if(wrap)wrap.style.touchAction='pan-y'}});
 document.querySelectorAll('[data-view-mode="pen"]').forEach(b=>b.remove());
+document.addEventListener('click',e=>{const b=e.target.closest('[data-tool]');if(b&&viewerMode==='scroll')setViewerMode('pen')});
+document.addEventListener('click',e=>{const mode=e.target.closest('[data-view-mode]');if(mode){if(mode.dataset.viewMode==='scroll')$$('[data-tool]').forEach(x=>x.classList.remove('active'));}else{const tool=e.target.closest('[data-tool]');if(tool){$$('[data-view-mode]').forEach(x=>x.classList.remove('active'));}}});
