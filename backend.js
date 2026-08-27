@@ -138,7 +138,7 @@
       db.from("materials").select("*").order("created_at",{ascending:false}),
       remote.selectedClass?db.from("assignments").select("*").eq("class_id",remote.selectedClass).order("created_at",{ascending:false}):Promise.resolve({data:[],error:null})
     ]);if(me)throw me;if(ae)throw ae;
-    materials.splice(0,materials.length,...m.map(x=>{const isLink=String(x.file_path||"").startsWith("url:");return{id:x.id,type:isLink?"link":x.kind,unit:isLink?"게임 · 앱 · 웹 활동":"모든 분반 공유",title:x.title,desc:x.description,pages:x.page_count,date:new Date(x.created_at).toLocaleDateString("ko-KR"),color:isLink?"blue":x.kind==='slide'?"green":"yellow",filePath:x.file_path,teacherId:x.teacher_id}}));
+    materials.splice(0,materials.length,...m.map(x=>{const isLink=String(x.file_path||"").startsWith("url:");return{id:x.id,type:isLink?"link":x.kind,unit:isLink?"게임 · 앱 · 웹 활동":"모든 분반 공유",title:x.title,desc:x.description,pages:x.page_count,date:new Date(x.created_at).toLocaleDateString("ko-KR"),color:isLink?"blue":x.kind==='slide'?"green":"yellow",filePath:x.file_path,canDownload:x.kind==='worksheet'&&/\.pdf$/i.test(x.file_path||""),teacherId:x.teacher_id}}));
     let own=new Map();if(remote.profile.role==='student'){const {data:s}=await db.from("submissions").select("*").eq("student_id",remote.user.id);own=new Map((s||[]).map(x=>[x.assignment_id,x]))}
     assignments=a.map(x=>({id:x.id,title:x.title,desc:x.description,due:x.due_at?new Date(x.due_at).toLocaleString("ko-KR"):"마감 없음",dueAt:x.due_at,d:x.due_at?Math.max(0,Math.ceil((new Date(x.due_at)-Date.now())/86400000)):"-",done:own.has(x.id),submission:own.get(x.id)}));
     renderMaterials();renderHomeMaterials();remote.profile.role==='teacher'?renderTeacherAssignments():renderAssignments();addRoleActions();if(remote.profile.role==='teacher')await loadTeacherDirectory();await loadCommunity();
@@ -191,6 +191,7 @@
   let remoteDocument=null,documentLoadId=0;
   if(window.pdfjsLib)window.pdfjsLib.GlobalWorkerOptions.workerSrc="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   const appOpenViewer=openViewer,appGoSlide=goSlide;
+  window.bioDownloadMaterial=async id=>{const material=materials.find(item=>String(item.id)===String(id));if(!material?.canDownload){toast("PDF 학습지만 다운로드할 수 있습니다.");return}try{const {data,error}=await db.storage.from("class-materials").download(material.filePath);if(error)throw error;const url=URL.createObjectURL(data),link=document.createElement("a");link.href=url;link.download=`${material.title.replace(/[\\/:*?"<>|]/g,"_")||"학습지"}.pdf`;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);toast("학습지 PDF 다운로드를 시작했습니다.")}catch(error){console.error(error);toast("학습지 PDF를 다운로드하지 못했습니다.")}};
   openViewer=async function(id){
     const material=materials.find(x=>x.id===id);if(material?.type==='link'){const url=normalizeActivityUrl(material.filePath.slice(4));window.open(url,"_blank","noopener,noreferrer");return}const loadId=++documentLoadId;remoteDocument?.viewer?.destroy();remoteDocument=null;document.querySelector("#documentCanvas")?.remove();document.querySelector("#pptxCanvas")?.remove();appOpenViewer(id);if(!material?.filePath)return;
     document.querySelector("#saveStatus").textContent="원본 자료 불러오는 중…";
