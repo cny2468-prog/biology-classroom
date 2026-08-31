@@ -6,6 +6,10 @@
     /* PPT 렌더러의 내부 슬라이드가 좌측에서 잘리지 않도록 실제 슬라이드 크기를 보존합니다. */
     #pptxCanvas { overflow: visible !important; }
     #pptxCanvas > div { overflow: visible !important; max-width: none !important; }
+    @media (max-width: 650px) {
+      .viewer-body { grid-template-columns: 1fr !important; }
+      .canvas-wrap { min-width: 0; }
+    }
   </style>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#f6f7f2"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache">
   <title>생명과학 실험실 — 우리 반 배움 공간</title>
