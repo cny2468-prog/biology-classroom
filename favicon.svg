@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="생명과학 실험실">
+  <rect width="64" height="64" rx="16" fill="#173b3a"/>
+  <path d="M32 12c-8 8-14 16-14 25a14 14 0 0 0 28 0c0-9-6-17-14-25Z" fill="#9bd8b5"/>
+  <path d="M32 20v31M32 36c-6-5-10-6-14-5M32 41c6-5 10-6 14-5" fill="none" stroke="#173b3a" stroke-width="3" stroke-linecap="round"/>
+</svg>
