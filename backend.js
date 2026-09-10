@@ -6,6 +6,9 @@
   const AUTH_REDIRECT="https://cny2468-prog.github.io/biology-classroom/";
   const authSettingsPromise=fetch(`${config.url}/auth/v1/settings`,{headers:{apikey:config.publishableKey}}).then(response=>response.ok?response.json():({mailer_autoconfirm:true})).catch(()=>({mailer_autoconfirm:true}));
   const remote={session:null,user:null,profile:null,classes:[],selectedClass:null};
+  function requireMaterialTeacher(){
+    if(remote.profile?.role!=="teacher")throw new Error("Only teachers can edit class materials.");
+  }
   const baseRenderMaterials=renderMaterials;
   renderMaterials=function(){baseRenderMaterials();document.querySelectorAll("#materialGrid [data-open-material]").forEach(button=>button.onclick=null);decorateTeacherMaterials()};
   window.bioBackend={db,remote};
@@ -152,6 +155,7 @@
     document.querySelectorAll("#materialGrid [data-open-material]").forEach(open=>{const material=materials.find(x=>x.id===open.dataset.openMaterial);if(!material||material.teacherId!==remote.user.id)return;const actions=open.parentElement;if(!actions.querySelector("[data-edit-material]")){const edit=document.createElement("button");edit.type="button";edit.className="material-edit";edit.dataset.editMaterial=material.id;edit.textContent="수정";edit.onclick=event=>{event.stopPropagation();material.type==='link'?editActivityLinkForm(material):editMaterialForm(material)};open.before(edit)}if(!actions.querySelector("[data-delete-material]")){const remove=document.createElement("button");remove.type="button";remove.className="material-delete";remove.dataset.deleteMaterial=material.id;remove.textContent="삭제";remove.onclick=event=>{event.stopPropagation();deleteMaterial(material,remove)};open.before(remove)}});
   }
   async function deleteMaterial(material,button){
+    requireMaterialTeacher();
     if(!confirm(`'${material.title}' 자료를 삭제할까요? 학생들의 해당 자료 필기도 함께 삭제됩니다.`))return;
     button.disabled=true;button.textContent="삭제 중…";
     try{const {error}=await db.from("materials").delete().eq("id",material.id).eq("teacher_id",remote.user.id);if(error)throw error;if(material.filePath&&!material.filePath.startsWith("url:")){const {error:fileError}=await db.storage.from("class-materials").remove([material.filePath]);if(fileError)console.warn("자료 파일 정리 실패",fileError)}await loadRemoteContent();toast("수업 자료를 삭제했습니다.")}catch(error){button.disabled=false;button.textContent="삭제";toast("자료를 삭제하지 못했습니다.");console.error(error)}
