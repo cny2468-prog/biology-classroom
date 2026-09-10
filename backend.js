@@ -297,4 +297,10 @@
       toast(error.message||"라운지 글을 삭제하지 못했습니다.");
     }
   };
+  const openLoungeEditor=window.bioEditLounge;
+  window.bioEditLounge=id=>{
+    openLoungeEditor(id);
+    const notice=[...document.querySelectorAll("#backendModal small")].find(item=>item.textContent.includes("삭제할 수 없습니다"));
+    if(notice)notice.textContent="기존 사진은 유지되며, 글은 수정하거나 삭제할 수 있습니다.";
+  };
 })();
