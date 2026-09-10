@@ -303,4 +303,20 @@
     const notice=[...document.querySelectorAll("#backendModal small")].find(item=>item.textContent.includes("삭제할 수 없습니다"));
     if(notice)notice.textContent="기존 사진은 유지되며, 글은 수정하거나 삭제할 수 있습니다.";
   };
+  const linkAwareRenderMaterials=renderMaterials;
+  renderMaterials=function(){
+    linkAwareRenderMaterials();
+    document.querySelectorAll("#materialGrid button[data-open-material]").forEach(button=>{
+      const material=materials.find(item=>String(item.id)===String(button.dataset.openMaterial));
+      if(material?.type!=="link")return;
+      const anchor=document.createElement("a");
+      anchor.href=normalizeActivityUrl(String(material.filePath||"").slice(4));
+      anchor.target="_blank";
+      anchor.rel="noopener noreferrer";
+      anchor.textContent=button.textContent;
+      anchor.setAttribute("aria-label",button.getAttribute("aria-label")||`${material.title} 열기`);
+      anchor.style.cssText="border:0;background:#173b3a;color:#fff;padding:8px 12px;text-decoration:none;display:inline-block";
+      button.replaceWith(anchor);
+    });
+  };
 })();
