@@ -266,4 +266,35 @@
   function escapeHtml(value){return String(value??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]))}
   db.auth.onAuthStateChange((event,session)=>{if(event==='PASSWORD_RECOVERY'&&session)setTimeout(openPasswordRecovery,0)});window.addEventListener('focus',()=>{if(remote.user)syncPointsAndCelebrate()});
   db.auth.getSession().then(({data})=>{if(data.session)activate(data.session).catch(e=>{console.error(e);toast("계정 정보를 불러오지 못했습니다.")})});
+  const baseRenderLounge=renderLounge;
+  renderLounge=function(){
+    baseRenderLounge();
+    document.querySelectorAll("[data-edit-lounge]").forEach(editButton=>{
+      const actions=editButton.parentElement;
+      if(actions.querySelector("[data-delete-lounge]"))return;
+      const deleteButton=document.createElement("button");
+      deleteButton.type="button";
+      deleteButton.dataset.deleteLounge=editButton.dataset.editLounge;
+      deleteButton.textContent="삭제";
+      deleteButton.onclick=()=>window.bioDeleteLounge?.(deleteButton.dataset.deleteLounge);
+      actions.append(deleteButton);
+    });
+  };
+  window.bioDeleteLounge=async id=>{
+    const item=lounge.find(post=>String(post.id)===String(id));
+    if(!item?.canEdit||!confirm(`'${item.rawTitle}' 글을 삭제할까요?`))return;
+    try{
+      const {error}=await db.from("lounge_posts").delete().eq("id",item.id).eq("author_id",remote.user.id);
+      if(error)throw error;
+      if(item.imagePaths?.length){
+        const {error:imageError}=await db.storage.from("community-images").remove(item.imagePaths);
+        if(imageError)console.warn("Failed to remove lounge images",imageError);
+      }
+      await loadCommunity();
+      toast("라운지 글을 삭제했습니다.");
+    }catch(error){
+      console.error(error);
+      toast(error.message||"라운지 글을 삭제하지 못했습니다.");
+    }
+  };
 })();
