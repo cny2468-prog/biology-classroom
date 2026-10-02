@@ -1,0 +1,11 @@
+#loungeGrid:has(.lounge-topic-section) { display: block; }
+.lounge-topic-section { margin: 0 0 42px; }
+.lounge-topic-section > header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin: 0 0 16px; border-bottom: 2px solid var(--line); }
+.lounge-topic-section > header h2 { margin: 0 0 10px; font-family: var(--hand); font-size: 27px; }
+.lounge-topic-section > header p { margin: 0; color: var(--muted); font-size: 14px; }
+.lounge-topic-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 18px; align-items: start; }
+.lounge-card-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lounge-rank { color: #28715a; font-weight: 800; white-space: nowrap; }
+.lounge-result-score { padding: 5px 9px; border-radius: 999px; background: #e8f3ed; color: #215747; font-weight: 700; white-space: nowrap; }
+.lounge-card-heading .lounge-result-score { margin-left: auto; }
+@media (max-width: 600px) { .lounge-topic-section > header { display: block; } .lounge-topic-section > header p { margin-bottom: 8px; } }
