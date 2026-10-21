@@ -2,7 +2,9 @@
 (()=>{
   const config=window.BIO_SUPABASE_CONFIG;
   if(!config||!window.supabase){console.error("Supabase client unavailable");return}
-  const db=window.supabase.createClient(config.url,config.publishableKey,{auth:{persistSession:true,autoRefreshToken:true}});
+  const storageKey=`sb-${new URL(config.url).hostname.split('.')[0]}-auth-token`;
+  const authStorage=window.BioPersistentAuth.createStorage(storageKey);
+  const db=window.supabase.createClient(config.url,config.publishableKey,{auth:{storageKey,storage:authStorage,persistSession:true,autoRefreshToken:true}});
   const AUTH_REDIRECT="https://cny2468-prog.github.io/biology-classroom/";
   const authSettingsPromise=fetch(`${config.url}/auth/v1/settings`,{headers:{apikey:config.publishableKey}}).then(response=>response.ok?response.json():({mailer_autoconfirm:true})).catch(()=>({mailer_autoconfirm:true}));
   const remote={session:null,user:null,profile:null,classes:[],selectedClass:null};
@@ -44,7 +46,7 @@
         if(needsAppVerification){const {error:mailError}=await db.auth.resetPasswordForEmail(email,{redirectTo:AUTH_REDIRECT});await db.auth.signOut();if(mailError)throw mailError;closeModals();toast("입력한 이메일로 가입 인증 링크를 보냈습니다. 링크에서 새 비밀번호를 설정해 주세요.");return}
         if(!data.session){closeModals();toast("가입 인증 메일을 보냈습니다. 메일의 링크를 눌러 가입을 완료해 주세요.");return}
         await activate(data.session);
-      }else{const {data,error}=await db.auth.signInWithPassword({email,password});if(error)throw error;if(data.user?.user_metadata?.email_verification_pending){await db.auth.signOut();throw Error("이메일 인증이 아직 완료되지 않았습니다. 비밀번호 찾기에서 인증 메일을 다시 받아 주세요.")}await activate(data.session)}
+      }else{const {data,error}=await db.auth.signInWithPassword({email,password});if(error)throw error;if(data.user?.user_metadata?.email_verification_pending){await db.auth.signOut();throw Error("이메일 인증이 아직 완료되지 않았습니다. 비밀번호 찾기에서 인증 메일을 다시 받아 주세요.")}await authStorage.rememberSession();await activate(data.session)}
       closeModals();toast("안전하게 로그인했습니다.");
     }catch(error){errorBox.textContent=koreanError(error.message)}
   };
@@ -61,7 +63,13 @@
   function normalizeName(value){return String(value||"").normalize("NFC").trim().replace(/\s+/g," ")}
   function openPasswordRecovery(){ensureAccountModals();const input=document.querySelector('#passwordRecoveryModal [name="displayName"]');input.value=sessionStorage.getItem("bio_password_reset_name")||"";closeModals();openModal("#passwordRecoveryModal")}
 
-  async function activate(session){
+  let activationPromise=null;
+  function activate(session){
+    if(activationPromise)return activationPromise;
+    activationPromise=activateAccount(session).finally(()=>{activationPromise=null});
+    return activationPromise;
+  }
+  async function activateAccount(session){
     remote.session=session;remote.user=session.user;
     if(remote.user.user_metadata?.email_verification_pending){ensureAccountModals();return}
     const {data:profile,error}=await db.from("profiles").select("*").eq("id",remote.user.id).single();if(error)throw error;
@@ -80,7 +88,7 @@
     const awaitingTeacher=remote.profile.role!=="teacher"&&remote.user.user_metadata?.requested_role==="teacher";
     role.className=`role-badge ${awaitingTeacher?'teacher':remote.profile.role}`;role.textContent=remote.profile.role==='teacher'?"교사":awaitingTeacher?"교사 승인 대기":"학생";
     let out=document.querySelector("#logoutButton");if(!out){out=document.createElement("button");out.id="logoutButton";out.className="logout-button";out.textContent="로그아웃";document.querySelector(".user-area").append(out)}
-    out.onclick=async()=>{await db.auth.signOut();location.reload()};
+    out.onclick=async()=>{try{await db.auth.signOut()}finally{await authStorage.removeItem(storageKey);location.reload()}};
   }
   function installAccountSettings(){
     const host=document.querySelector(".activity-card");if(!host||host.querySelector("#accountSettings"))return;
@@ -270,8 +278,27 @@
   const localSave=saveDrawing;saveDrawing=function(){localSave();if(!remote.user||remote.profile?.role!=="student"||!state.currentMaterial)return;db.from("personal_notes").upsert({material_id:state.currentMaterial.id,student_id:remote.user.id,page_number:state.currentSlide+1,drawing_data:canvas.toDataURL(),memo:document.querySelector("#sideNote").value},{onConflict:"material_id,student_id,page_number"}).then(({error})=>{if(error)console.error(error)})};
   const localLoad=loadDrawing;loadDrawing=async function(){localLoad();if(!remote.user||remote.profile?.role!=="student"||!state.currentMaterial)return;const {data}=await db.from("personal_notes").select("drawing_data,memo").eq("material_id",state.currentMaterial.id).eq("student_id",remote.user.id).eq("page_number",state.currentSlide+1).maybeSingle();if(data?.drawing_data){const img=new Image;img.onload=()=>ctx.drawImage(img,0,0,canvas.clientWidth,canvas.clientHeight);img.src=data.drawing_data}if(data)document.querySelector("#sideNote").value=data.memo||""};
   function escapeHtml(value){return String(value??"").replace(/[&<>'"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]))}
-  db.auth.onAuthStateChange((event,session)=>{if(event==='PASSWORD_RECOVERY'&&session)setTimeout(openPasswordRecovery,0)});window.addEventListener('focus',()=>{if(remote.user)syncPointsAndCelebrate()});
-  db.auth.getSession().then(({data})=>{if(data.session)activate(data.session).catch(e=>{console.error(e);toast("계정 정보를 불러오지 못했습니다.")})});
+  let restoringSession=null;
+  function restoreSession(){
+    if(restoringSession)return restoringSession;
+    restoringSession=db.auth.getSession().then(async({data,error})=>{
+      if(error)throw error;
+      if(!data.session){if(remote.user)location.reload();return}
+      remote.session=data.session;
+      if(!remote.profile)await activate(data.session);
+    }).catch(error=>{console.error(error);toast("로그인 정보를 불러오는 중입니다. 인터넷 연결 후 다시 시도합니다.")}).finally(()=>{restoringSession=null});
+    return restoringSession;
+  }
+  db.auth.onAuthStateChange((event,session)=>{
+    // Schedule work outside the auth callback so refresh locks can be released.
+    if(event==='PASSWORD_RECOVERY'&&session)setTimeout(openPasswordRecovery,0);
+    if(session){remote.session=session;if(!remote.profile)setTimeout(restoreSession,0)}
+    if(event==='SIGNED_OUT'&&remote.user)setTimeout(()=>location.reload(),0);
+  });
+  window.addEventListener('focus',()=>{restoreSession();if(remote.profile)syncPointsAndCelebrate()});
+  window.addEventListener('online',restoreSession);
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')restoreSession()});
+  restoreSession();
   const baseRenderLounge=renderLounge;
   renderLounge=function(){
     baseRenderLounge();
