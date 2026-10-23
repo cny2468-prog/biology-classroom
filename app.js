@@ -1,6 +1,33 @@
 "use strict";
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
-const store={get(k,f){try{return JSON.parse(localStorage.getItem(`bio_v2_${k}`))??f}catch{return f}},set(k,v){localStorage.setItem(`bio_v2_${k}`,JSON.stringify(v))}};
+const store={
+  temporary:new Map(),writes:new Map(),databasePromise:null,
+  database(){
+    if(!this.databasePromise)this.databasePromise=new Promise(resolve=>{
+      try{const request=indexedDB.open('biology-classroom-notes',1);request.onupgradeneeded=()=>request.result.createObjectStore('notes');request.onsuccess=()=>resolve(request.result);request.onerror=request.onblocked=()=>resolve(null)}catch{resolve(null)}
+    });
+    return this.databasePromise;
+  },
+  async backup(mode,k,value){
+    const database=await this.database();if(!database)return {ok:false};
+    return new Promise(resolve=>{
+      try{const transaction=database.transaction('notes',mode==='get'?'readonly':'readwrite'),notes=transaction.objectStore('notes'),request=mode==='get'?notes.get(k):notes.put(value,k);transaction.oncomplete=()=>resolve({ok:true,value:request.result});transaction.onerror=transaction.onabort=()=>resolve({ok:false})}catch{resolve({ok:false})}
+    });
+  },
+  get(k,f){if(this.temporary.has(k))return this.temporary.get(k);try{return JSON.parse(localStorage.getItem(`bio_v2_${k}`))??f}catch{return f}},
+  async read(k,f){
+    const local=this.get(k,undefined);if(local!==undefined)return local;
+    const saved=await this.backup('get',k);return this.get(k,saved.ok&&saved.value!==undefined?saved.value:f);
+  },
+  set(k,v){
+    // Keep the latest value in this tab even when browser storage is full.
+    this.temporary.set(k,v);
+    let local=false;try{localStorage.setItem(`bio_v2_${k}`,JSON.stringify(v));local=true}catch{}
+    // A backup also prevents an older IndexedDB value resurfacing after a later failed write.
+    if(!local||this.databasePromise){const saved=this.backup('put',k,v).then(result=>local||result.ok);this.writes.set(k,saved)}else this.writes.set(k,Promise.resolve(true));
+    return local;
+  }
+};
 const state={route:"home",points:store.get("points",0),student:store.get("student",{name:"가입 전 학생"}),materialFilter:"all",assignmentFilter:"open",questionFilter:"all",loungeFilter:"all",currentMaterial:null,currentSlide:0,tool:"pen",drawing:false,history:[],formMode:null};
 const materials=[];
 let assignments=store.get("assignments",[]);
@@ -56,11 +83,21 @@ let canvas,ctx,resizeObserver,activePointerId=null,activeLastPoint=null,activeHi
 function setViewerMode(mode){viewerMode=mode;const wrap=$('#lessonCanvas'),note=$('#noteCanvas');if(!wrap||!note)return;wrap.classList.toggle('scroll-mode',mode==='scroll');note.style.pointerEvents=mode==='scroll'?'none':'auto';note.style.touchAction=mode==='scroll'?'none':'none';$$('[data-view-mode]').forEach(b=>b.classList.toggle('active',b.dataset.viewMode===mode));if(mode==='scroll'){$('#slideContent').style.overflow='auto';wrap.scrollTop=0}else{$('#slideContent').style.overflow='hidden'}resizeCanvas()}
 function openViewer(id){const m=materials.find(x=>String(x.id)===String(id));if(!m)return;state.currentMaterial=m;state.currentSlide=0;state.history=[];viewerZoom=1;viewerBaseWidth=0;const host=$('#lessonCanvas'),viewport=$('#canvasViewport');host.style.width='';host.style.maxWidth='';host.classList.remove('scroll-mode');if(viewport){viewport.scrollLeft=0;viewport.scrollTop=0}$('#viewerTitle').textContent=m.title;$('#viewerType').textContent=m.type==='slide'?'수업 슬라이드':'학습지';$('#slideTotal').textContent=m.pages;$('#sideNote').value=store.get(`memo_${m.id}`,"");$('#slideThumbs').innerHTML=Array.from({length:m.pages},(_,i)=>`<div class="slide-thumb" data-slide="${i}"><b>${i+1}</b><br>${m.type==='worksheet'?'탐구 문제':'핵심 개념 '+(i+1)}</div>`).join('');openModal('#viewerModal');canvas=$('#noteCanvas');ctx=canvas.getContext('2d');setTimeout(()=>{viewerBaseWidth=host.getBoundingClientRect().width;setViewerZoom(1,false);setViewerMode('pen');resizeCanvas();renderSlide();loadDrawing()},0);resizeObserver?.disconnect();resizeObserver=new ResizeObserver(resizeCanvas);resizeObserver.observe(host);$$('[data-slide]').forEach(t=>t.onclick=()=>goSlide(+t.dataset.slide))}
 function renderSlide(){const m=state.currentMaterial,i=state.currentSlide,t=slideTemplates[i%slideTemplates.length];$('#slideCurrent').textContent=i+1;$$('.slide-thumb').forEach((x,n)=>x.classList.toggle('active',n===i));$('#prevSlide').disabled=i===0;$('#nextSlide').disabled=i===m.pages-1;const el=$('#slideContent');el.className=`slide-content ${m.type==='worksheet'?'worksheet':''}`;if(m.type==='worksheet')el.innerHTML=`<span class="slide-kicker">탐구 학습지 · ${i+1}</span><h3>${m.title}</h3><p><b>${i+1}.</b> 체온이 정상 범위를 벗어났을 때 우리 몸에서 일어나는 변화를 원인과 결과가 드러나도록 설명해 보세요.</p><div class="question-box">나의 생각을 필기 도구로 자유롭게 기록하세요.</div>`;else el.innerHTML=`<span class="slide-kicker">${t.k}</span><h3>${t.h}</h3><p>${t.p}</p>${t.diagram?'<div class="diagram"></div>':''}${t.question?'<div class="question-box">핵심어: 체온 · 시상 하부 · 땀샘 · 음성 피드백</div>':''}`}
-function goSlide(i){saveDrawing();state.currentSlide=i;state.history=[];renderSlide();loadDrawing()}
+function goSlide(i){if(!state.currentMaterial||!Number.isInteger(i)||i<0||i>=state.currentMaterial.pages||i===state.currentSlide)return;clearTimeout(saveSoon.t);saveDrawing();state.currentSlide=i;state.history=[];renderSlide();loadDrawing()}
 function resizeCanvas(){if(!canvas)return;const rect=canvas.getBoundingClientRect(),ratio=devicePixelRatio||1,old=canvas.toDataURL();canvas.width=Math.round(rect.width*ratio);canvas.height=Math.round(rect.height*ratio);ctx.setTransform(ratio,0,0,ratio,0,0);if(old&&old!=='data:,'){const img=new Image;img.onload=()=>ctx.drawImage(img,0,0,rect.width,rect.height);img.src=old}}
 function drawingKey(){return `drawing_${state.currentMaterial.id}_${state.currentSlide}`}
-function loadDrawing(){const data=store.get(drawingKey(),null);ctx.clearRect(0,0,canvas.width,canvas.height);if(data){const img=new Image;img.onload=()=>ctx.drawImage(img,0,0,canvas.clientWidth,canvas.clientHeight);img.src=data}}
-function saveDrawing(){if(!canvas||!state.currentMaterial)return;store.set(drawingKey(),canvas.toDataURL());store.set(`notes_${state.currentMaterial.id}`,true);$('#saveStatus').textContent='✓ 저장됨'}
+async function loadDrawing(){
+  if(!canvas||!state.currentMaterial)return;
+  const key=drawingKey(),target=canvas;ctx.clearRect(0,0,target.width,target.height);const baseline=target.toDataURL();
+  const data=await store.read(key,null);if(key!==drawingKey()||target!==canvas)return;
+  if(data)await new Promise(resolve=>{const img=new Image;img.onload=()=>{if(key===drawingKey()&&target===canvas&&target.toDataURL()===baseline)ctx.drawImage(img,0,0,target.clientWidth,target.clientHeight);resolve()};img.onerror=resolve;img.src=data});
+}
+function saveDrawing(){
+  if(!canvas||!state.currentMaterial)return;
+  const key=drawingKey(),local=store.set(key,canvas.toDataURL());store.set(`notes_${state.currentMaterial.id}`,true);
+  $('#saveStatus').textContent=local?'✓ 저장됨':'필기 저장 중…';
+  if(!local)store.writes.get(key).then(saved=>{if(state.currentMaterial&&key===drawingKey())$('#saveStatus').textContent=saved?'✓ 이 기기에 저장됨':'필기 임시 보관 중 · 내 필기 저장으로 내려받아 주세요.'});
+}
 function pointer(e){const r=canvas.getBoundingClientRect(),scaleX=canvas.clientWidth/r.width||1,scaleY=canvas.clientHeight/r.height||1;return{x:(e.clientX-r.left)*scaleX,y:(e.clientY-r.top)*scaleY}}
 function startDraw(e){if(activePointerId!==null||e.pointerType==='mouse'&&e.button!==0)return;if(state.tool==='text'){const p=pointer(e),txt=prompt('슬라이드에 넣을 메모를 입력하세요.');if(txt){snapshot();ctx.font='18px "Gowun Dodum"';ctx.fillStyle=$('#penColor').value;ctx.fillText(txt,p.x,p.y);saveSoon()}return}activePointerId=e.pointerId;activeStrokeChanged=false;state.drawing=true;try{canvas.setPointerCapture(e.pointerId)}catch{}activeLastPoint=pointer(e);if(state.tool==='highlighter'){activeHighlighterBase=document.createElement('canvas');activeHighlighterBase.width=canvas.width;activeHighlighterBase.height=canvas.height;activeHighlighterBase.getContext('2d').drawImage(canvas,0,0);activeHighlighterPath=new Path2D;activeHighlighterPath.moveTo(activeLastPoint.x,activeLastPoint.y)}e.preventDefault()}
 function drawPointerPoint(e){const p=pointer(e),pressure=e.pointerType==='pen'?.65+Math.max(0,e.pressure)*.7:1;if(!activeLastPoint){activeLastPoint=p;return}if(!activeStrokeChanged){snapshot();activeStrokeChanged=true}ctx.lineCap='round';ctx.lineJoin='round';if(state.tool==='highlighter'&&activeHighlighterPath){activeHighlighterPath.lineTo(p.x,p.y);ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(activeHighlighterBase,0,0);ctx.restore();ctx.globalCompositeOperation='source-over';ctx.strokeStyle=$('#penColor').value;ctx.globalAlpha=.18;ctx.lineWidth=18*pressure;ctx.stroke(activeHighlighterPath)}else{ctx.beginPath();ctx.moveTo(activeLastPoint.x,activeLastPoint.y);ctx.lineTo(p.x,p.y);if(state.tool==='eraser'){ctx.globalCompositeOperation='destination-out';ctx.globalAlpha=1;ctx.lineWidth=22*pressure}else{ctx.globalCompositeOperation='source-over';ctx.strokeStyle=$('#penColor').value;ctx.globalAlpha=1;ctx.lineWidth=3*pressure}ctx.stroke()}activeLastPoint=p}
