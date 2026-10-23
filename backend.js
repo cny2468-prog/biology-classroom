@@ -13,6 +13,12 @@
   }
   const baseRenderMaterials=renderMaterials;
   renderMaterials=function(){baseRenderMaterials();document.querySelectorAll("#materialGrid [data-open-material]").forEach(button=>button.onclick=null);decorateTeacherMaterials()};
+  const baseRenderAssignments=renderAssignments;
+  renderAssignments=function(){
+    const teacher=remote.profile?.role==="teacher";
+    document.querySelector(".assignment-tabs").classList.toggle("hidden",teacher);
+    if(teacher)renderTeacherAssignments();else baseRenderAssignments();
+  };
   window.bioBackend={db,remote};
 
   const authForm=document.querySelector("#joinForm");
@@ -135,13 +141,13 @@
       const code=sessionStorage.getItem("bio_pending_class_code")||remote.user.user_metadata?.class_code;if(code){const {error}=await db.rpc("join_class_with_code",{code});if(!error)sessionStorage.removeItem("bio_pending_class_code")}
       const {data,error}=await db.from("enrollments").select("class_id,classes(id,name)").eq("student_id",remote.user.id);if(error)throw error;remote.classes=data.map(x=>x.classes).filter(Boolean);
     }
-    remote.selectedClass=remote.classes[0]?.id||null;renderClassControls();
+    remote.selectedClass=remote.classes.some(classroom=>classroom.id===remote.selectedClass)?remote.selectedClass:remote.classes[0]?.id||null;renderClassControls();
   }
   function renderClassControls(){
     let bar=document.querySelector("#classControlBar");if(!bar){bar=document.createElement("div");bar.id="classControlBar";bar.className="class-control-bar";document.querySelector(".topbar").after(bar)}
     const options=remote.classes.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
     bar.innerHTML=`<div class="wrap"><label>분반 <select id="classSelector">${options||'<option>등록된 분반 없음</option>'}</select></label>${remote.profile.role==='teacher'?'<button id="createClass">+ 분반 만들기</button>':''}<span>${remote.profile.role==='teacher'?'담당 분반의 과제와 제출물만 표시됩니다.':'가입한 분반의 자료와 과제만 표시됩니다.'}</span></div>`;
-    const select=bar.querySelector("#classSelector");select.disabled=!remote.classes.length;select.onchange=async()=>{remote.selectedClass=select.value;await loadRemoteContent()};
+    const select=bar.querySelector("#classSelector");select.value=remote.selectedClass||"";select.disabled=!remote.classes.length;select.onchange=async()=>{remote.selectedClass=select.value;await loadRemoteContent()};
     if(remote.profile.role==='teacher')bar.querySelector("#createClass").onclick=()=>classForm();
   }
   async function loadRemoteContent(){
@@ -152,7 +158,7 @@
     materials.splice(0,materials.length,...m.map(x=>{const isLink=String(x.file_path||"").startsWith("url:");return{id:x.id,type:isLink?"link":x.kind,unit:isLink?"게임 · 앱 · 웹 활동":"모든 분반 공유",title:x.title,desc:x.description,pages:x.page_count,date:new Date(x.created_at).toLocaleDateString("ko-KR"),color:isLink?"blue":x.kind==='slide'?"green":"yellow",filePath:x.file_path,canDownload:/\.(pdf|pptx)$/i.test(x.file_path||""),teacherId:x.teacher_id}}));
     let own=new Map();if(remote.profile.role==='student'){const {data:s}=await db.from("submissions").select("*").eq("student_id",remote.user.id);own=new Map((s||[]).map(x=>[x.assignment_id,x]))}
     assignments=a.map(x=>({id:x.id,title:x.title,desc:x.description,due:x.due_at?new Date(x.due_at).toLocaleString("ko-KR"):"마감 없음",dueAt:x.due_at,d:x.due_at?Math.max(0,Math.ceil((new Date(x.due_at)-Date.now())/86400000)):"-",done:own.has(x.id),submission:own.get(x.id)}));
-    renderMaterials();renderHomeMaterials();remote.profile.role==='teacher'?renderTeacherAssignments():renderAssignments();addRoleActions();if(remote.profile.role==='teacher')await loadTeacherDirectory();await loadCommunity();
+    renderMaterials();renderHomeMaterials();renderAssignments();addRoleActions();if(remote.profile.role==='teacher')await loadTeacherDirectory();await loadCommunity();
   }
   function renderHomeMaterials(){
     const card=document.querySelector(".today-card");if(!card)return;const heading=card.querySelector(".section-heading")?.outerHTML||"";
@@ -174,7 +180,7 @@
   }
   function renderTeacherAssignments(){
     document.querySelector("#openCount").textContent=assignments.length;document.querySelector("#doneCount").textContent="-";
-    document.querySelector("#assignmentList").innerHTML=assignments.map(a=>`<article class="assignment-item"><div class="assignment-date"><span>마감</span><strong>${a.d}</strong></div><div><span class="tag green">교사용</span><h3>${escapeHtml(a.title)}</h3><p>${assignmentDescriptionHtml(a.desc)}</p><small>${a.due} 마감</small></div><div class="assignment-actions"><button data-view-submissions="${a.id}">제출 현황</button><button data-edit-assignment="${a.id}">수정</button><button class="danger" data-delete-assignment="${a.id}">삭제</button></div></article>`).join("")||'<div class="empty-panel page-empty"><span>✓</span><h3>이 분반에 등록된 과제가 없습니다</h3></div>';
+    document.querySelector("#assignmentList").innerHTML=assignments.map(a=>`<article class="assignment-item"><div class="assignment-date"><span>마감</span><strong>${a.d}</strong></div><div><span class="tag green">교사용</span><h3>${escapeHtml(a.title)}</h3><p>${assignmentDescriptionHtml(a.desc)}</p><small>${a.dueAt?a.due+' 마감':'마감 없음'}</small></div><div class="assignment-actions"><button data-view-submissions="${a.id}">제출 현황</button><button data-edit-assignment="${a.id}">수정</button><button class="danger" data-delete-assignment="${a.id}">삭제</button></div></article>`).join("")||'<div class="empty-panel page-empty"><span>✓</span><h3>이 분반에 등록된 과제가 없습니다</h3></div>';
     document.querySelectorAll("[data-view-submissions]").forEach(b=>b.onclick=()=>viewSubmissions(b.dataset.viewSubmissions));
     document.querySelectorAll("[data-edit-assignment]").forEach(b=>b.onclick=()=>editAssignmentForm(assignments.find(item=>item.id===b.dataset.editAssignment)));
     document.querySelectorAll("[data-delete-assignment]").forEach(b=>b.onclick=()=>deleteAssignment(assignments.find(item=>item.id===b.dataset.deleteAssignment),b));
@@ -184,7 +190,16 @@
   function classForm(){modalForm("새 분반 만들기",'<label>분반 이름<input name="name" required placeholder="예: 2학년 3반"></label><label>학생 가입 코드<input name="code" required minlength="6" placeholder="6자리 이상"></label>',async fd=>{const {error}=await db.from("classes").insert({name:fd.get("name"),join_code:String(fd.get("code")).toUpperCase(),teacher_id:remote.user.id});if(error)throw error})}
   function assignmentForm(){if(!remote.classes.length){toast("먼저 분반을 만들어 주세요.");return}modalForm("모든 분반 과제 등록",`<p class="shared-notice">등록하면 담당 중인 모든 분반(${remote.classes.length}개)에 같은 과제가 올라갑니다.</p><label>과제명<input name="title" required></label><label>설명<textarea name="description"></textarea></label><label>제출 기한<input name="due" type="datetime-local" required></label>`,async fd=>{const title=String(fd.get("title")).trim(),description=String(fd.get("description")||"").trim(),dueAt=new Date(fd.get("due")).toISOString(),rows=remote.classes.map(classroom=>({class_id:classroom.id,teacher_id:remote.user.id,title,description,due_at:dueAt})),{error}=await db.from("assignments").insert(rows);if(error)throw error})}
   function localDateTimeValue(value){if(!value)return"";const date=new Date(value),offset=date.getTimezoneOffset()*60000;return new Date(date-offset).toISOString().slice(0,16)}
-  function editAssignmentForm(item){if(!item)return;modalForm("과제 수정",`<label>과제명<input name="title" required value="${escapeHtml(item.title)}"></label><label>설명<textarea name="description">${escapeHtml(item.desc||"")}</textarea></label><label>제출 기한<input name="due" type="datetime-local" required value="${localDateTimeValue(item.dueAt)}"></label>`,async fd=>{const {error}=await db.from("assignments").update({title:String(fd.get("title")).trim(),description:String(fd.get("description")||"").trim(),due_at:new Date(fd.get("due")).toISOString()}).eq("id",item.id).eq("teacher_id",remote.user.id);if(error)throw error})}
+  function editAssignmentForm(item){
+    if(!item||remote.profile?.role!=="teacher")return;
+    modalForm("과제 수정",`<label>과제명<input name="title" required value="${escapeHtml(item.title)}"></label><label>설명<textarea name="description">${escapeHtml(item.desc||"")}</textarea></label><label>마감 일시<input name="due" type="datetime-local" value="${localDateTimeValue(item.dueAt)}"></label><small>현재 선택한 분반의 과제만 수정됩니다. 마감 일시를 비우면 마감 없이 진행합니다.</small>`,async fd=>{
+      if(remote.profile?.role!=="teacher")throw Error("교사 계정으로 로그인해 주세요.");
+      const title=String(fd.get("title")||"").trim(),due=String(fd.get("due")||"");
+      if(!title)throw Error("과제명을 입력해 주세요.");
+      const {error}=await db.from("assignments").update({title,description:String(fd.get("description")||"").trim(),due_at:due?new Date(due).toISOString():null}).eq("id",item.id).eq("teacher_id",remote.user.id).select("id").single();
+      if(error)throw Error("과제를 수정하지 못했습니다. 담당 분반과 로그인 상태를 확인한 뒤 다시 시도해 주세요.");
+    });
+  }
   async function deleteAssignment(item,button){if(!item||!confirm(`'${item.title}' 과제를 삭제할까요? 학생 제출물도 함께 삭제됩니다.`))return;button.disabled=true;try{const {data:files}=await db.from("submissions").select("file_path").eq("assignment_id",item.id),{error}=await db.from("assignments").delete().eq("id",item.id).eq("teacher_id",remote.user.id);if(error)throw error;const paths=(files||[]).map(row=>row.file_path).filter(Boolean);if(paths.length)await db.storage.from("assignment-submissions").remove(paths);await loadRemoteContent();toast("과제를 삭제했습니다.")}catch(error){button.disabled=false;toast("과제를 삭제하지 못했습니다.");console.error(error)}}
   let pptxModulePromise=null;
   function loadPptxModule(){return pptxModulePromise??=import("./vendor/pptx-renderer/pptx-renderer.browser.es.js")}
