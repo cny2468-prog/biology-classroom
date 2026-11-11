@@ -1,7 +1,7 @@
 {
   "date": "2026-11-11",
-  "environment": "Local preview with isolated fixture data through globally configured Playwright MCP",
-  "url": "http://127.0.0.1:58149/#lounge",
+  "environment": "Isolated local browser flows, production SQL permission checks, and live student browser checks through globally configured Playwright MCP",
+  "url": "https://cny2468-prog.github.io/biology-classroom/#lounge",
   "passed": [
     "Teacher creates a titled activity category",
     "Blank title rejected",
@@ -29,10 +29,12 @@
     "Production database: student can read categories and post within them",
     "Production database: student cannot create or rename categories",
     "Production database: nonexistent categories and category/type mismatches rejected",
-    "Production database: blank category titles rejected and test changes rolled back"
+    "Production database: blank category titles rejected and test changes rolled back",
+    "GitHub Pages deployed verified implementation commit 8220f5992b53647fd7a58ad2e01b448af07a18d8",
+    "Live authenticated student: activity category controls and write-form selector visible",
+    "Live authenticated student: category read succeeds and teacher management controls absent"
   ],
-  "pending": [
-    "Deploy frontend and verify live site"
-  ],
-  "productionDatabase": "Migration and rollback-only role verification passed via authenticated Supabase SQL Editor on 2026-11-11"
+  "pending": [],
+  "productionDatabase": "Migration and rollback-only role verification passed via authenticated Supabase SQL Editor on 2026-11-11",
+  "observation": "Live student session emitted 400 responses from join_roster_class and join_class_with_code; category reads succeeded. No production lounge posts were created during browser verification."
 }
