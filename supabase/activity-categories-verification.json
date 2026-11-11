@@ -1,0 +1,35 @@
+{
+  "date": "2026-11-11",
+  "environment": "Local preview with isolated fixture data through globally configured Playwright MCP",
+  "url": "http://127.0.0.1:58149/#lounge",
+  "passed": [
+    "Teacher creates a titled activity category",
+    "Blank title rejected",
+    "Category persists after reload",
+    "Teacher renames category",
+    "Student sees categories without category management controls",
+    "Write within category preselects it",
+    "Student post appears in selected category",
+    "Post category persists after reload",
+    "Category filter excludes other posts",
+    "Unclassified legacy posts remain accessible",
+    "Activity selector hides for article and reappears for activity",
+    "Category selection required when categories exist",
+    "Teacher moves an existing activity post into a category",
+    "Duplicate category title reports error",
+    "Save failure retains form input",
+    "Category read failure offers working retry",
+    "New category remains visible when created from another category filter",
+    "Special characters in category title remain text",
+    "390px mobile viewport has no horizontal overflow",
+    "Mobile category write action opens with correct category",
+    "No browser page errors during verified flows",
+    "JavaScript syntax checks and git diff whitespace check"
+  ],
+  "pending": [
+    "Apply lounge-activity-categories.sql to production Supabase",
+    "Run verify-lounge-activity-categories.sql against real database permissions",
+    "Deploy frontend and verify live site"
+  ],
+  "blocker": "Saved Supabase management token rejected: Invalid access token. Dashboard requires sign-in."
+}
