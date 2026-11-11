@@ -24,12 +24,15 @@
     "390px mobile viewport has no horizontal overflow",
     "Mobile category write action opens with correct category",
     "No browser page errors during verified flows",
-    "JavaScript syntax checks and git diff whitespace check"
+    "JavaScript syntax checks and git diff whitespace check",
+    "Production database: teacher can create and rename categories",
+    "Production database: student can read categories and post within them",
+    "Production database: student cannot create or rename categories",
+    "Production database: nonexistent categories and category/type mismatches rejected",
+    "Production database: blank category titles rejected and test changes rolled back"
   ],
   "pending": [
-    "Apply lounge-activity-categories.sql to production Supabase",
-    "Run verify-lounge-activity-categories.sql against real database permissions",
     "Deploy frontend and verify live site"
   ],
-  "blocker": "Saved Supabase management token rejected: Invalid access token. Dashboard requires sign-in."
+  "productionDatabase": "Migration and rollback-only role verification passed via authenticated Supabase SQL Editor on 2026-11-11"
 }
