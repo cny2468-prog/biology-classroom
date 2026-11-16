@@ -1,0 +1,11 @@
+.submission-file-list { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.submission-file-list li { display: flex; align-items: center; gap: 12px; padding: 10px; border: 1px solid var(--line); background: var(--mint2); }
+.submission-file-list li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.submission-file-list button { flex-shrink: 0; padding: 5px 10px; background: var(--white); border: 1px solid var(--sage); }
+#submissionFileCount { font-size: 13px; font-weight: bold; color: var(--muted); }
+.submission-attachments { display: grid; gap: 8px; margin: 12px 0; }
+.submission-attachments button { padding: 10px; text-align: left; border: 1px solid var(--sage); background: var(--white); overflow-wrap: anywhere; }
+.submission-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+#backendModal .form-card { max-height: calc(100dvh - 32px); overflow-y: auto; }
+#backendModal input[type="file"] { width: 100%; min-width: 0; }
+#backendModal button:disabled { opacity: .6; cursor: wait; }
