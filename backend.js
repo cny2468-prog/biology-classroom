@@ -224,8 +224,15 @@
     }
     return submission?.file_path?[{path:submission.file_path,name:submission.file_path.split('/').pop()}]:[];
   }
-  function submissionFileButtons(files){return `<div class="submission-attachments">${files.map(file=>`<button type="button" data-download-submission="${escapeHtml(file.path)}">파일 열기 · ${escapeHtml(file.name)}</button>`).join('')}</div>`}
+  function submissionFileButtons(files){return `<div class="submission-attachments">${files.map(file=>`<button type="button" data-download-submission="${escapeHtml(file.path)}" data-submission-filename="${escapeHtml(file.name)}">${/\.(hwp|hwpx)$/i.test(file.name)?'파일 다운로드':'파일 열기'} · ${escapeHtml(file.name)}</button>`).join('')}</div>`}
   function bindSubmissionDownloads(){document.querySelectorAll('#backendModal [data-download-submission]').forEach(button=>button.onclick=async()=>{
+    if(/\.(hwp|hwpx)$/i.test(button.dataset.submissionFilename||'')){
+      button.disabled=true;
+      try{const {data,error}=await db.storage.from('assignment-submissions').download(button.dataset.downloadSubmission);if(error||!data)throw error||Error('파일을 불러오지 못했습니다.');downloadBlob(new Blob([data],{type:'application/octet-stream'}),button.dataset.submissionFilename);toast('한글 파일을 다운로드했습니다.')}
+      catch(error){toast(error.message||'한글 파일을 다운로드하지 못했습니다.')}
+      finally{button.disabled=false}
+      return;
+    }
     const opened=window.open('about:blank','_blank');if(opened)opened.opener=null;
     try{const {data,error}=await db.storage.from('assignment-submissions').createSignedUrl(button.dataset.downloadSubmission,60);if(error||!data?.signedUrl)throw error||Error('파일 주소를 불러오지 못했습니다.');if(opened)opened.location.replace(data.signedUrl);else window.location.assign(data.signedUrl)}catch(error){opened?.close();toast(error.message||'파일을 열지 못했습니다.')}
   })}
@@ -274,14 +281,30 @@
   const appOpenViewer=openViewer,appGoSlide=goSlide;
   function loadExportImage(source){return new Promise((resolve,reject)=>{const image=new Image;image.onload=()=>resolve(image);image.onerror=()=>reject(Error("필기 이미지를 불러오지 못했습니다."));image.src=source})}
   function safeDownloadName(material){return`${material.title.replace(/[\\/:*?"<>|]/g,"_")||"수업 자료"}-필기포함.pdf`}
-  function downloadBlob(blob,filename){const url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000)}
+  function downloadBlob(blob,filename){saveFileBlob(blob,filename)}
+  let preparedPdfsPromise=null;
+  async function preparedMaterialPdf(material){
+    preparedPdfsPromise??=fetch('material-pdfs.json?v=20261120').then(response=>response.ok?response.json():{}).catch(()=>({}));
+    const prepared=(await preparedPdfsPromise)[material.filePath];
+    if(!prepared?.file)return null;
+    const response=await fetch(prepared.file);if(!response.ok)throw Error(`변환된 PDF를 불러오지 못했습니다. (${response.status})`);
+    const bytes=await response.arrayBuffer();if(new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-')throw Error('변환된 PDF 파일을 확인할 수 없습니다.');return bytes;
+  }
   async function collectExportNotes(material,pageCount){let notes=[];if(remote.user){const {data,error}=await db.from("personal_notes").select("page_number,drawing_data").eq("material_id",material.id).eq("student_id",remote.user.id);if(error)throw error;notes=data||[]}const sources=new Map(notes.filter(note=>note.drawing_data).map(note=>[note.page_number,note.drawing_data]));for(let pageNumber=1;pageNumber<=pageCount;pageNumber++){const local=await store.read(`drawing_${material.id}_${pageNumber-1}`,null);if(local&&!sources.has(pageNumber))sources.set(pageNumber,local)}const images=new Map();let skipped=0;await Promise.all([...sources].map(async([pageNumber,source])=>{try{images.set(pageNumber,await loadExportImage(source))}catch{skipped++}}));return{images,skipped}}
   function addCanvasPage(output,canvas,pageNumber){const orientation=canvas.width>=canvas.height?"landscape":"portrait",{jsPDF}=window.jspdf;if(!output)output=new jsPDF({orientation,unit:"px",format:[canvas.width,canvas.height],compress:true,hotfixes:["px_scaling"]});else output.addPage([canvas.width,canvas.height],orientation);output.addImage(canvas.toDataURL("image/jpeg",.86),"JPEG",0,0,canvas.width,canvas.height,`page-${pageNumber}`,"FAST");return output}
   async function exportPdfMaterial(material,bytes,button){const sourcePdf=await window.pdfjsLib.getDocument({data:bytes.slice(0)}).promise;try{const {images,skipped}=await collectExportNotes(material,sourcePdf.numPages);material.pages=sourcePdf.numPages;if(!images.size){downloadBlob(new Blob([bytes],{type:"application/pdf"}),safeDownloadName(material));toast(skipped?"손상된 필기를 제외하고 PDF를 저장했습니다.":"PDF를 저장했습니다.");return}let output=null;for(let pageNumber=1;pageNumber<=sourcePdf.numPages;pageNumber++){if(button)button.textContent=`PDF 만드는 중 ${pageNumber}/${sourcePdf.numPages}`;const page=await sourcePdf.getPage(pageNumber),viewport=page.getViewport({scale:1.35}),pageCanvas=document.createElement("canvas");pageCanvas.width=Math.ceil(viewport.width);pageCanvas.height=Math.ceil(viewport.height);const pageContext=pageCanvas.getContext("2d",{alpha:false});pageContext.fillStyle="#fff";pageContext.fillRect(0,0,pageCanvas.width,pageCanvas.height);await page.render({canvasContext:pageContext,viewport}).promise;const drawing=images.get(pageNumber);if(drawing)pageContext.drawImage(drawing,0,0,pageCanvas.width,pageCanvas.height);output=addCanvasPage(output,pageCanvas,pageNumber);page.cleanup();pageCanvas.width=pageCanvas.height=1;if(pageNumber%4===0)await new Promise(resolve=>setTimeout(resolve,0))}if(!output)throw Error("PDF 페이지를 만들지 못했습니다.");output.save(safeDownloadName(material));toast(skipped?"손상된 필기를 제외하고 PDF를 저장했습니다.":"원본과 필기가 보이는 PDF를 저장했습니다.")}finally{await sourcePdf.destroy()}}
   async function waitForExportAssets(host){await Promise.all([...host.querySelectorAll("img")].map(image=>image.complete?image.decode?.().catch(()=>{}):new Promise(resolve=>{image.onload=image.onerror=resolve})));await document.fonts?.ready}
   async function exportPptxMaterial(material,bytes,button){if(!window.html2canvas)throw Error("PPT PDF 변환 기능을 불러오지 못했습니다. 페이지를 새로고침해 주세요.");const {PptxViewer,RECOMMENDED_ZIP_LIMITS}=await loadPptxModule(),host=document.createElement("div");host.style.cssText="position:fixed;left:-100000px;top:0;width:1280px;height:720px;overflow:hidden;background:#fff;pointer-events:none";document.body.append(host);let viewer=null;try{viewer=await PptxViewer.open(bytes,host,{renderMode:"slide",fitMode:"contain",zipLimits:RECOMMENDED_ZIP_LIMITS,lazySlides:true,pdfjs:false});host.style.width=`${viewer.slideWidth}px`;host.style.height=`${viewer.slideHeight}px`;const {images,skipped}=await collectExportNotes(material,viewer.slideCount);material.pages=viewer.slideCount;let output=null;for(let index=0;index<viewer.slideCount;index++){if(button)button.textContent=`PDF 만드는 중 ${index+1}/${viewer.slideCount}`;await viewer.renderSlide(index);await waitForExportAssets(host);const pageCanvas=await window.html2canvas(host,{backgroundColor:"#fff",logging:false,scale:1,useCORS:false,width:viewer.slideWidth,height:viewer.slideHeight});const drawing=images.get(index+1);if(drawing)pageCanvas.getContext("2d").drawImage(drawing,0,0,pageCanvas.width,pageCanvas.height);output=addCanvasPage(output,pageCanvas,index+1);pageCanvas.width=pageCanvas.height=1;if((index+1)%3===0)await new Promise(resolve=>setTimeout(resolve,0))}if(!output)throw Error("PPT 슬라이드를 PDF로 만들지 못했습니다.");output.save(safeDownloadName(material));toast(skipped?"손상된 필기를 제외하고 PPT를 PDF로 저장했습니다.":"PPT 전체 슬라이드를 PDF로 저장했습니다.")}finally{viewer?.destroy();host.remove()}}
   window.bioDownloadMaterial=async id=>{const material=materials.find(item=>String(item.id)===String(id)),button=document.querySelector(`[data-download-material="${id}"]`);if(!material?.canDownload){toast("PDF 또는 PPTX 자료만 다운로드할 수 있습니다.");return}const originalLabel=button?.textContent;if(button){button.disabled=true;button.textContent="PDF 준비 중…"}try{
-    if(!window.pdfjsLib||!window.jspdf?.jsPDF)throw Error("PDF 생성 기능을 불러오지 못했습니다. 페이지를 새로고침해 주세요.");if(state.currentMaterial?.id===material.id)saveDrawing();
+    if(state.currentMaterial?.id===material.id)saveDrawing();
+    const prepared=await preparedMaterialPdf(material);
+    if(prepared){
+      const {images,skipped}=await collectExportNotes(material,material.pages);
+      if(!images.size){downloadBlob(new Blob([prepared],{type:'application/pdf'}),safeDownloadName(material));toast(skipped?'손상된 필기를 제외하고 PDF를 저장했습니다.':'PDF를 저장했습니다.');return}
+      if(!window.pdfjsLib||!window.jspdf?.jsPDF)throw Error('필기를 합치는 기능을 불러오지 못했습니다. 페이지를 새로고침해 주세요.');
+      await exportPdfMaterial(material,prepared,button);return;
+    }
+    if(!window.pdfjsLib||!window.jspdf?.jsPDF)throw Error("PDF 생성 기능을 불러오지 못했습니다. 페이지를 새로고침해 주세요.");
     const {data:signed,error:signedError}=await db.storage.from("class-materials").createSignedUrl(material.filePath,900);if(signedError)throw signedError;const response=await fetch(signed.signedUrl);if(!response.ok)throw Error(`원본 자료를 불러오지 못했습니다. (${response.status})`);const bytes=await response.arrayBuffer();if(/\.pdf$/i.test(material.filePath))await exportPdfMaterial(material,bytes,button);else if(/\.pptx$/i.test(material.filePath))await exportPptxMaterial(material,bytes,button);else throw Error("PDF로 변환할 수 없는 자료입니다.")
   }catch(error){console.error(error);toast(error.message||"수업 자료 PDF를 만들지 못했습니다.")}finally{if(button){button.disabled=false;button.textContent=originalLabel}}};
   openViewer=async function(id){

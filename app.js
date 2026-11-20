@@ -37,10 +37,19 @@ function assignmentDescriptionHtml(value){
   const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   return String(value??'').split(/(https?:\/\/[^\s<>"']+)/g).map((part,index)=>{
     if(index%2===0)return escape(part);
-    const file=/\.(hwp|hwpx|pdf)(?:\?|$)/i.test(part);
-    return `<a href="${escape(part)}" target="_blank" rel="noopener noreferrer"${file?' download':''}>${file?'첨부 양식 내려받기':escape(part)}</a>`;
+    const file=/\.(hwp|hwpx|pdf)(?:[?#]|$)/i.test(part);
+    let filename='';if(file){try{filename=decodeURIComponent(new URL(part).pathname.split('/').pop())}catch{filename='과제양식'}}
+    return `<a href="${escape(part)}" ${file?`download="${escape(filename)}" data-assignment-download="${escape(filename)}"`:'target="_blank" rel="noopener noreferrer"'}>${file?'첨부 양식 내려받기':escape(part)}</a>`;
   }).join('').replace(/\r?\n/g,'<br>');
 }
+function saveFileBlob(blob,filename){const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000)}
+document.addEventListener('click',async event=>{
+  const link=event.target.closest?.('[data-assignment-download]');if(!link)return;event.preventDefault();if(link.dataset.downloading)return;
+  link.dataset.downloading='true';link.setAttribute('aria-busy','true');
+  try{const response=await fetch(link.href);if(!response.ok)throw Error(`양식 파일을 불러오지 못했습니다. (${response.status})`);const bytes=await response.arrayBuffer();if(!bytes.byteLength)throw Error('양식 파일이 비어 있습니다.');saveFileBlob(new Blob([bytes],{type:/\.pdf$/i.test(link.dataset.assignmentDownload)?'application/pdf':'application/octet-stream'}),link.dataset.assignmentDownload);toast('양식 파일을 다운로드했습니다.')}
+  catch(error){toast(error.message||'양식 다운로드에 실패했습니다. 다시 시도해 주세요.')}
+  finally{delete link.dataset.downloading;link.removeAttribute('aria-busy')}
+});
 function toast(msg){const el=$("#toast");el.textContent=msg;el.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>el.classList.remove("show"),2200)}
 function updateUser(){const initial=state.student.name==='가입 전 학생'?'?':state.student.name.slice(-2,-1)||'?';$$('.avatar-button').forEach(x=>x.textContent=initial);$('.big-avatar').textContent=initial;$("#profileName").textContent=state.student.name;$("#headerPoints").textContent=state.points;$("#profilePoints").textContent=state.points}
 function route(name){state.route=name;$$('.page').forEach(p=>p.classList.toggle('active',p.dataset.page===name));$$('[data-route]').forEach(b=>b.classList.toggle('active',b.dataset.route===name));$('.main-nav').classList.remove('open');history.replaceState(null,"",`#${name}`);window.scrollTo({top:0,behavior:'smooth'});if(name==='materials')renderMaterials();if(name==='assignments')renderAssignments();if(name==='questions')renderQuestions();if(name==='lounge')renderLounge()}
